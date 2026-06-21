@@ -28,3 +28,32 @@ async function exportResourcePack(args) {
   const out = await zip.generateAsync({ type: 'blob' });
   saveAs(out, itemId + '.zip');
 }
+
+/** KubeJS用ZIP（kubejs/ フォルダ一式＋仕様書）を出力 */
+async function exportKubeJs(args) {
+  const { itemId, canvas, kubeFiles, texturePath, spec, specMarkdown } = args;
+
+  const zip = new JSZip();
+  kubeFiles.forEach((f) => zip.file(f.path, f.text));
+
+  const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  zip.file(texturePath, pngBlob);
+
+  if (spec) zip.file(itemId + '.spec.json', JSON.stringify(spec, null, 2));
+  if (specMarkdown) zip.file('BUILD_SPEC.md', specMarkdown);
+
+  zip.file('README.txt', [
+    'KubeJS 出力 — 導入方法',
+    '',
+    '1. このZIP内の "kubejs" フォルダを、Minecraftインスタンスのルート',
+    '   (.minecraft または各インスタンスフォルダ) に配置してください。',
+    '   既に kubejs フォルダがある場合は中身をマージします。',
+    '2. 必要Mod: KubeJS (1.20.1 / 2001.x系)。ドロップ設定を使う場合は LootJS も。',
+    '3. ゲーム内で /reload (サーバースクリプト) または再起動 (登録) で反映。',
+    '',
+    'BUILD_SPEC.md / *.spec.json は Mod実装の参照用です(ゲームには不要)。',
+  ].join('\n'));
+
+  const out = await zip.generateAsync({ type: 'blob' });
+  saveAs(out, itemId + '_kubejs.zip');
+}

@@ -108,6 +108,11 @@
 
       <section class="panel">
         <h2>出力設定</h2>
+        <label class="field"><span>出力形式</span>
+          <select id="export-target">
+            <option value="resourcepack">リソースパック（見た目のみ）</option>
+            <option value="kubejs">KubeJS（登録＋レシピ＋ドロップ）</option>
+          </select></label>
         <label class="field"><span>namespace</span>
           <input type="text" id="namespace" value="natane_forge" /></label>
         <label class="field"><span>アイテムID</span>
@@ -139,6 +144,7 @@
   <script src="js/greedyMesh.js"></script>
   <script src="js/texture.js"></script>
   <script src="js/exporters/mcJavaItem.js"></script>
+  <script src="js/exporters/kubeJs.js"></script>
   <script src="js/spec.js"></script>
   <script src="js/packZip.js"></script>
   <script src="js/editor.js"></script>

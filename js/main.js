@@ -190,10 +190,17 @@
     const spec = buildSpecObject(meta, ctx);
     const specMarkdown = buildSpecMarkdown(meta, ctx);
 
-    await exportResourcePack({ namespace, itemId, model, canvas, packFormat, spec, specMarkdown });
-
-    $('export-info').textContent =
-      `出力完了: ${itemId}.zip （要素 ${boxCount} 個 / テクスチャ ${canvas.width}px / 仕様書同梱）`;
+    const target = $('export-target').value;
+    if (target === 'kubejs') {
+      const { files, texturePath } = buildKubeJsFiles(meta, { namespace, itemId }, model);
+      await exportKubeJs({ itemId, canvas, kubeFiles: files, texturePath, spec, specMarkdown });
+      $('export-info').textContent =
+        `出力完了: ${itemId}_kubejs.zip （KubeJS ${files.length}ファイル / 仕様書同梱）`;
+    } else {
+      await exportResourcePack({ namespace, itemId, model, canvas, packFormat, spec, specMarkdown });
+      $('export-info').textContent =
+        `出力完了: ${itemId}.zip （要素 ${boxCount} 個 / テクスチャ ${canvas.width}px / 仕様書同梱）`;
+    }
   }
 
   /** Minecraftのリソース名規則: 半角英数 . _ - / のみ・小文字 */
