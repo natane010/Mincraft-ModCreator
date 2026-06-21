@@ -1,0 +1,112 @@
+/* spec.js
+ * メタデータ＋入手メモから「Mod実装用の仕様書」を生成する（DOM非依存・純関数）。
+ *
+ * 目的: 後で Claude Code 等で実際のMod(Javaコード)を作るときに、
+ *       生成された各リソースが「何で・どう動くべきか」をAI/人間が理解できるようにする。
+ *
+ *  - buildSpecObject : 機械可読の構造化スペック(JSON)
+ *  - buildSpecMarkdown: 人間＋AIが読むマニフェスト(Markdown)
+ *
+ * meta = {
+ *   type, displayName, intent,
+ *   stats:{attack,attackSpeed,durability,range,magazine,reloadTime},
+ *   abilities:[...labels],
+ *   acquisition:{ method, crafting:{grid:[9], count}, dropNote, note }
+ * }
+ * ctx = { namespace, itemId, modelPath, texturePath, textureSize, boxCount, voxelCount, grid:{sx,sy,sz} }
+ */
+
+const SPEC_FORMAT = 'natane-forge-spec/1';
+
+function buildSpecObject(meta, ctx) {
+  const craftGrid = (meta.acquisition.crafting.grid || []).map(s => (s || '').trim());
+  const hasCraft = craftGrid.some(Boolean);
+  return {
+    format: SPEC_FORMAT,
+    generatedBy: "Natane's Voxel & Data Forge",
+    namespace: ctx.namespace,
+    id: ctx.itemId,
+    displayName: meta.displayName || ctx.itemId,
+    type: meta.type,
+    intent: meta.intent || '',
+    stats: meta.stats,
+    abilities: meta.abilities,
+    acquisition: {
+      method: meta.acquisition.method,
+      crafting: hasCraft
+        ? { shape: [craftGrid.slice(0, 3), craftGrid.slice(3, 6), craftGrid.slice(6, 9)], count: meta.acquisition.crafting.count }
+        : null,
+      dropNote: meta.acquisition.dropNote || '',
+      note: meta.acquisition.note || '',
+    },
+    resources: {
+      model: ctx.modelPath,
+      texture: ctx.texturePath,
+      textureSize: ctx.textureSize,
+    },
+    geometry: {
+      grid: ctx.grid,
+      voxelCount: ctx.voxelCount,
+      elementCount: ctx.boxCount,
+    },
+  };
+}
+
+function buildSpecMarkdown(meta, ctx) {
+  const s = meta.stats;
+  const name = meta.displayName || ctx.itemId;
+  const L = [];
+  L.push(`# ${name}  (\`${ctx.namespace}:${ctx.itemId}\`)`);
+  L.push('');
+  L.push('> このファイルは Mod 実装の参照用です。生成された各リソースの役割・想定挙動をまとめています。');
+  L.push('');
+  L.push(`- **種別**: ${meta.type}`);
+  if (meta.intent) L.push(`- **用途・想定挙動**: ${meta.intent}`);
+  L.push('');
+
+  L.push('## ステータス');
+  L.push('| 項目 | 値 |');
+  L.push('|---|---|');
+  L.push(`| 攻撃力 | ${s.attack} |`);
+  L.push(`| 攻撃速度 | ${s.attackSpeed} |`);
+  L.push(`| 耐久値 | ${s.durability} |`);
+  L.push(`| 射程 | ${s.range} |`);
+  L.push(`| 装弾数 | ${s.magazine} |`);
+  L.push(`| リロード時間 | ${s.reloadTime} |`);
+  L.push('');
+
+  if (meta.abilities.length) {
+    L.push('## 特殊能力');
+    meta.abilities.forEach(a => L.push(`- ${a}`));
+    L.push('');
+  }
+
+  L.push('## 入手方法');
+  L.push(`- **手段**: ${meta.acquisition.method}`);
+  const grid = (meta.acquisition.crafting.grid || []).map(x => (x || '').trim());
+  if (grid.some(Boolean)) {
+    L.push(`- **クラフト** (完成数 ${meta.acquisition.crafting.count}):`);
+    L.push('```');
+    for (let r = 0; r < 3; r++) {
+      L.push(grid.slice(r * 3, r * 3 + 3).map(c => c || '.').join(' | '));
+    }
+    L.push('```');
+  }
+  if (meta.acquisition.dropNote) L.push(`- **ドロップ元**: ${meta.acquisition.dropNote}`);
+  if (meta.acquisition.note) L.push(`- **メモ**: ${meta.acquisition.note}`);
+  L.push('');
+
+  L.push('## リソース');
+  L.push(`- モデル: \`${ctx.modelPath}\``);
+  L.push(`- テクスチャ: \`${ctx.texturePath}\` (${ctx.textureSize}×${ctx.textureSize}px)`);
+  L.push(`- 形状: グリッド ${ctx.grid.sx}×${ctx.grid.sy}×${ctx.grid.sz} / ボクセル ${ctx.voxelCount} / モデル要素 ${ctx.boxCount}`);
+  L.push('');
+
+  L.push('## 実装メモ (For Mod dev / Claude Code)');
+  L.push(`- このアイテムは namespace \`${ctx.namespace}\`、ID \`${ctx.itemId}\` で登録する想定。`);
+  L.push('- 上記モデル/テクスチャをリソースパック側に配置し、コード側でアイテム登録・挙動を実装してください。');
+  if (meta.intent) L.push(`- 想定挙動: ${meta.intent}`);
+  L.push('');
+
+  return L.join('\n');
+}

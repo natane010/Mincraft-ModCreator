@@ -19,9 +19,59 @@
 
     buildPalette();
     buildTemplateMenu();
+    buildMetaForm();
     bindModeButtons();
     bindControls();
     $('voxel-count').textContent = '0';
+  }
+
+  /* ---- メタデータ＆メモ フォーム ---- */
+  const ABILITIES = ['炎属性', '毒付与', 'ノックバック', '範囲爆発', '吸収', '加速', '透明化', '発光'];
+
+  function buildMetaForm() {
+    // 特殊能力チェックボックス
+    const al = $('ability-list');
+    ABILITIES.forEach((a, i) => {
+      const id = 'ab-' + i;
+      const wrap = document.createElement('label');
+      wrap.className = 'ability';
+      wrap.innerHTML = `<input type="checkbox" id="${id}" value="${a}"> ${a}`;
+      al.appendChild(wrap);
+    });
+    // クラフト3×3グリッド
+    const cg = $('craft-grid');
+    for (let i = 0; i < 9; i++) {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.id = 'craft-' + i;
+      inp.placeholder = '—';
+      inp.title = 'アイテムID (例: minecraft:iron_ingot)';
+      cg.appendChild(inp);
+    }
+  }
+
+  function collectMeta() {
+    const num = (id) => parseFloat($(id).value) || 0;
+    const grid = [];
+    for (let i = 0; i < 9; i++) grid.push($('craft-' + i).value);
+    const abilities = ABILITIES.filter((_, i) => $('ab-' + i).checked);
+    return {
+      type: $('meta-type').value,
+      displayName: $('meta-name').value.trim(),
+      intent: $('meta-intent').value.trim(),
+      stats: {
+        attack: num('st-attack'), attackSpeed: num('st-attackspeed'),
+        durability: num('st-durability'), range: num('st-range'),
+        magazine: num('st-magazine'), reloadTime: num('st-reload'),
+      },
+      abilities,
+      acquisition: {
+        method: $('acq-method').value,
+        crafting: { grid, count: parseInt($('craft-count').value, 10) || 1 },
+        dropNote: $('drop-note').value.trim(),
+        note: $('free-note').value.trim(),
+      },
+    };
   }
 
   /* ---- テンプレート ---- */
@@ -126,10 +176,24 @@
     const packFormat = parseInt($('pack-format').value, 10) || 34;
 
     const { model, canvas, boxCount } = buildItemModel(editor.data, { namespace, itemId });
-    await exportResourcePack({ namespace, itemId, model, canvas, packFormat });
+
+    // Mod実装用の仕様書を生成
+    const meta = collectMeta();
+    const ctx = {
+      namespace, itemId,
+      modelPath: `assets/${namespace}/models/item/${itemId}.json`,
+      texturePath: `assets/${namespace}/textures/item/${itemId}.png`,
+      textureSize: canvas.width,
+      boxCount, voxelCount: editor.data.count(),
+      grid: { sx: editor.data.sx, sy: editor.data.sy, sz: editor.data.sz },
+    };
+    const spec = buildSpecObject(meta, ctx);
+    const specMarkdown = buildSpecMarkdown(meta, ctx);
+
+    await exportResourcePack({ namespace, itemId, model, canvas, packFormat, spec, specMarkdown });
 
     $('export-info').textContent =
-      `出力完了: ${itemId}.zip （要素 ${boxCount} 個 / テクスチャ ${canvas.width}px）`;
+      `出力完了: ${itemId}.zip （要素 ${boxCount} 個 / テクスチャ ${canvas.width}px / 仕様書同梱）`;
   }
 
   /** Minecraftのリソース名規則: 半角英数 . _ - / のみ・小文字 */

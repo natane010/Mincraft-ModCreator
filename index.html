@@ -51,6 +51,62 @@
       </section>
 
       <section class="panel">
+        <h2>メタデータ＆メモ</h2>
+        <label class="field"><span>種別</span>
+          <select id="meta-type">
+            <option value="item">アイテム</option>
+            <option value="weapon">武器</option>
+            <option value="tool">道具</option>
+            <option value="armor">防具</option>
+            <option value="gun">銃</option>
+            <option value="block">ブロック</option>
+            <option value="mob">モブ</option>
+            <option value="material">素材</option>
+          </select></label>
+        <label class="field"><span>表示名</span>
+          <input type="text" id="meta-name" placeholder="例: 試作型魔導銃" /></label>
+        <label class="field"><span>用途・想定挙動メモ（Mod制作用）</span>
+          <textarea id="meta-intent" rows="2" placeholder="例: 右クリックで火球を発射する魔法の杖"></textarea></label>
+
+        <details class="sub">
+          <summary>戦闘ステータス</summary>
+          <div class="grid-inputs2">
+            <label>攻撃力<input type="number" id="st-attack" value="0" step="0.5" /></label>
+            <label>攻撃速度<input type="number" id="st-attackspeed" value="0" step="0.1" /></label>
+            <label>耐久値<input type="number" id="st-durability" value="0" /></label>
+            <label>射程<input type="number" id="st-range" value="0" step="0.5" /></label>
+            <label>装弾数<input type="number" id="st-magazine" value="0" /></label>
+            <label>リロード<input type="number" id="st-reload" value="0" step="0.1" /></label>
+          </div>
+        </details>
+
+        <details class="sub">
+          <summary>特殊能力</summary>
+          <div id="ability-list" class="abilities"></div>
+        </details>
+
+        <details class="sub" open>
+          <summary>入手方法メモ</summary>
+          <label class="field"><span>入手手段</span>
+            <select id="acq-method">
+              <option value="crafting">クラフト</option>
+              <option value="drop">ドロップ</option>
+              <option value="both">両方</option>
+              <option value="other">その他</option>
+              <option value="none">なし</option>
+            </select></label>
+          <span class="mini">クラフト（3×3・アイテムID）</span>
+          <div id="craft-grid" class="craft-grid"></div>
+          <label class="field"><span>完成数</span>
+            <input type="number" id="craft-count" value="1" min="1" /></label>
+          <label class="field"><span>ドロップ元メモ</span>
+            <textarea id="drop-note" rows="2" placeholder="例: ゾンビ 5% / 鉄鉱石ブロック 確定1"></textarea></label>
+          <label class="field"><span>自由メモ</span>
+            <textarea id="free-note" rows="2"></textarea></label>
+        </details>
+      </section>
+
+      <section class="panel">
         <h2>出力設定</h2>
         <label class="field"><span>namespace</span>
           <input type="text" id="namespace" value="natane_forge" /></label>
@@ -83,6 +139,7 @@
   <script src="js/greedyMesh.js"></script>
   <script src="js/texture.js"></script>
   <script src="js/exporters/mcJavaItem.js"></script>
+  <script src="js/spec.js"></script>
   <script src="js/packZip.js"></script>
   <script src="js/editor.js"></script>
   <script src="js/main.js"></script>

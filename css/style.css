@@ -98,5 +98,36 @@ button.danger { color: var(--danger); border-color: var(--danger); background: t
 
 .hint { font-size: 11px; color: var(--muted); margin: 8px 0 0; line-height: 1.45; }
 
+textarea {
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 8px; font-size: 12px; width: 100%; resize: vertical;
+  font-family: inherit;
+}
+select {
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; font-size: 13px;
+}
+
+details.sub { margin: 8px 0; border: 1px solid var(--line); border-radius: 6px; }
+details.sub > summary {
+  cursor: pointer; padding: 7px 9px; font-size: 12px; color: var(--text);
+  background: var(--panel2); border-radius: 6px; user-select: none;
+}
+details.sub[open] > summary { border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0; }
+details.sub > *:not(summary) { padding: 0 9px; }
+details.sub > div, details.sub > label { margin-top: 8px; }
+details.sub > label:last-child, details.sub > div:last-child { padding-bottom: 9px; }
+
+.grid-inputs2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.grid-inputs2 label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+
+.abilities { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.ability { font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 5px; }
+
+.mini { display: block; font-size: 11px; color: var(--muted); margin: 8px 0 4px; }
+.craft-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.craft-grid input { text-align: center; padding: 6px 2px; font-size: 11px; }
+
 #canvas-container { flex: 1; position: relative; min-width: 0; }
 #canvas-container canvas { display: block; }

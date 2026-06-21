@@ -3,7 +3,7 @@
  * フォルダ構造でZIP化し、ローカルにダウンロードさせる。
  */
 async function exportResourcePack(args) {
-  const { namespace, itemId, model, canvas, packFormat } = args;
+  const { namespace, itemId, model, canvas, packFormat, spec, specMarkdown } = args;
 
   const zip = new JSZip();
 
@@ -20,6 +20,10 @@ async function exportResourcePack(args) {
   // canvas -> PNG Blob
   const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
   zip.file(base + '/textures/item/' + itemId + '.png', pngBlob);
+
+  // Mod実装用の仕様書（Minecraftは無視する追加ファイル）
+  if (spec) zip.file(itemId + '.spec.json', JSON.stringify(spec, null, 2));
+  if (specMarkdown) zip.file('BUILD_SPEC.md', specMarkdown);
 
   const out = await zip.generateAsync({ type: 'blob' });
   saveAs(out, itemId + '.zip');
