@@ -15,6 +15,13 @@
   <div id="app">
     <aside id="sidebar">
       <section class="panel">
+        <h2>テンプレート</h2>
+        <select id="template-select" class="wide-select"></select>
+        <button id="btn-load-template" class="wide">雛形を読み込む</button>
+        <p class="hint">防具・武器・モブのざっくり形状から開始できます。</p>
+      </section>
+
+      <section class="panel">
         <h2>モード</h2>
         <div class="mode-row">
           <button class="mode-btn active" data-mode="add">追加</button>
@@ -72,6 +79,7 @@
 
   <!-- アプリ本体（読み込み順が依存順） -->
   <script src="js/voxelData.js"></script>
+  <script src="js/templates.js"></script>
   <script src="js/greedyMesh.js"></script>
   <script src="js/texture.js"></script>
   <script src="js/exporters/mcJavaItem.js"></script>

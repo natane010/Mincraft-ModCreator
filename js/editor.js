@@ -204,6 +204,17 @@ class VoxelEditor {
     this._changed();
   }
 
+  /** テンプレート等の VoxelData をまるごと読み込み、描画し直す */
+  loadData(voxelData) {
+    for (const mesh of this.meshes.values()) this._disposeMesh(mesh);
+    this.meshes.clear();
+    this.data = voxelData;
+    for (const [x, y, z, color] of voxelData.entries()) this._addMesh(x, y, z, color);
+    this._rebuildHelpers();
+    this._frameCamera();
+    this._changed();
+  }
+
   /** グリッドサイズ変更（範囲外ボクセルは破棄して再描画） */
   resize(sx, sy, sz) {
     this.data.resize(sx, sy, sz);

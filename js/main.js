@@ -18,9 +18,41 @@
     editor.onChange = (n) => { $('voxel-count').textContent = n; };
 
     buildPalette();
+    buildTemplateMenu();
     bindModeButtons();
     bindControls();
     $('voxel-count').textContent = '0';
+  }
+
+  /* ---- テンプレート ---- */
+  function buildTemplateMenu() {
+    const sel = $('template-select');
+    const cats = {};
+    TEMPLATES.forEach((t) => { (cats[t.category] = cats[t.category] || []).push(t); });
+    for (const cat of Object.keys(cats)) {
+      const og = document.createElement('optgroup');
+      og.label = cat;
+      cats[cat].forEach((t) => {
+        const o = document.createElement('option');
+        o.value = t.id;
+        o.textContent = `${t.name}（${t.sx}×${t.sy}×${t.sz}）`;
+        og.appendChild(o);
+      });
+      sel.appendChild(og);
+    }
+    $('btn-load-template').addEventListener('click', loadTemplate);
+  }
+
+  function loadTemplate() {
+    const id = $('template-select').value;
+    const t = TEMPLATES.find((x) => x.id === id);
+    if (!t) return;
+    if (editor.data.count() > 0 &&
+        !confirm(`「${t.name}」を読み込むと現在の内容は置き換えられます。よろしいですか？`)) return;
+    editor.loadData(t.build());
+    $('grid-x').value = t.sx;
+    $('grid-y').value = t.sy;
+    $('grid-z').value = t.sz;
   }
 
   /* ---- パレット ---- */
