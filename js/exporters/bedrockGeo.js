@@ -38,5 +38,13 @@ function buildBedrockGeo(data, opts) {
     }],
   };
 
+  // 銃口/発射点ロケーター（TaCZ/GeckoLib のアニメ・発射原点に利用）
+  if (opts.muzzle) {
+    const m = opts.muzzle;
+    geo['minecraft:geometry'][0].bones[0].locators = {
+      muzzle: [m.x, m.y, m.z],
+    };
+  }
+
   return { geo, canvas: renderPaletteCanvas(palette), boxCount: boxes.length };
 }

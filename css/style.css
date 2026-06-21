@@ -129,5 +129,44 @@ details.sub > label:last-child, details.sub > div:last-child { padding-bottom: 9
 .craft-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
 .craft-grid input { text-align: center; padding: 6px 2px; font-size: 11px; }
 
+/* Undo/Redo・ミラー・ロケーター */
+.history-row { margin-top: 6px; }
+.history-row button {
+  flex: 1; padding: 7px 0; cursor: pointer; font-size: 12px;
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 7px;
+}
+.history-row button:disabled { opacity: .4; cursor: default; }
+
+.mirror-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 8px; font-size: 12px; color: var(--text);
+}
+.mirror-row label { display: flex; align-items: center; gap: 3px; }
+.tiny {
+  font-size: 11px; padding: 4px 8px; cursor: pointer;
+  background: var(--panel2); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.tiny:hover { color: var(--text); }
+
+/* 一括出力キュー */
+.queue-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.queue-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  font-size: 12px; color: var(--text);
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; margin-bottom: 5px;
+}
+.queue-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* バリデーション結果 */
+.validation { margin: 8px 0 0; display: flex; flex-direction: column; gap: 5px; }
+.validation .v-error, .validation .v-warn {
+  font-size: 11px; line-height: 1.4; padding: 6px 8px; border-radius: 6px;
+}
+.validation .v-error { color: #ffd9d4; background: rgba(231,76,60,.15); border: 1px solid var(--danger); }
+.validation .v-warn { color: #fdebc8; background: rgba(241,196,15,.12); border: 1px solid #b7950b; }
+
 #canvas-container { flex: 1; position: relative; min-width: 0; }
 #canvas-container canvas { display: block; }

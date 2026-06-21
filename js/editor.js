@@ -7,10 +7,16 @@ class VoxelEditor {
   constructor(container, data) {
     this.container = container;
     this.data = data;
-    this.mode = 'add';            // 'add' | 'remove' | 'paint'
+    this.mode = 'add';            // 'add' | 'remove' | 'paint' | 'locator'
     this.color = '#3a8ee6';
     this.meshes = new Map();      // "x,y,z" -> THREE.Mesh
     this.onChange = null;         // ボクセル数変更時のコールバック
+    this.onHistory = null;        // 履歴変化時(undo数, redo数)のコールバック
+
+    this.mirror = { x: false, y: false, z: false }; // 対称編集
+    this.muzzle = null;           // 銃口ロケーター {x,y,z}（小数可）
+    this._muzzleMarker = null;
+    this.history = { undo: [], redo: [], limit: 80 };
 
     this._initScene();
     this._initLights();
@@ -128,6 +134,16 @@ class VoxelEditor {
     if (!hits.length) return;
     const hit = hits[0];
 
+    if (this.mode === 'locator') {
+      // 銃口/発射点を 0.5 刻みで設置（面の少し外側＝法線方向に寄せる）
+      const p = hit.point.clone();
+      if (hit.face) p.addScaledVector(hit.face.normal, 0.001);
+      const r = (v) => Math.round(v * 2) / 2;
+      this._pushHistory();
+      this.setMuzzle({ x: r(p.x), y: r(p.y), z: r(p.z) });
+      return;
+    }
+
     if (hit.object === this.basePlane) {
       // 空の床をクリック -> その升目の y=0 に配置
       if (this.mode !== 'add') return;
@@ -149,27 +165,55 @@ class VoxelEditor {
   }
 
   /* ---------- 編集操作 ---------- */
+  /** 有効なミラー軸を考慮した対象座標の一覧（重複なし） */
+  _mirrorCoords(x, y, z) {
+    const { sx, sy, sz } = this.data;
+    const xs = this.mirror.x ? [x, sx - 1 - x] : [x];
+    const ys = this.mirror.y ? [y, sy - 1 - y] : [y];
+    const zs = this.mirror.z ? [z, sz - 1 - z] : [z];
+    const out = new Map();
+    for (const X of xs) for (const Y of ys) for (const Z of zs) {
+      out.set(X + ',' + Y + ',' + Z, [X, Y, Z]);
+    }
+    return [...out.values()];
+  }
+
   _place(x, y, z) {
-    if (!this.data.inBounds(x, y, z) || this.data.has(x, y, z)) return;
-    this.data.set(x, y, z, this.color);
-    this._addMesh(x, y, z, this.color);
+    const targets = this._mirrorCoords(x, y, z)
+      .filter(([px, py, pz]) => this.data.inBounds(px, py, pz) && !this.data.has(px, py, pz));
+    if (!targets.length) return;
+    this._pushHistory();
+    for (const [px, py, pz] of targets) {
+      this.data.set(px, py, pz, this.color);
+      this._addMesh(px, py, pz, this.color);
+    }
     this._changed();
   }
 
   _erase(x, y, z) {
-    if (!this.data.has(x, y, z)) return;
-    this.data.remove(x, y, z);
-    const k = this.data.key(x, y, z);
-    const mesh = this.meshes.get(k);
-    if (mesh) { this._disposeMesh(mesh); this.meshes.delete(k); }
+    const targets = this._mirrorCoords(x, y, z).filter(([px, py, pz]) => this.data.has(px, py, pz));
+    if (!targets.length) return;
+    this._pushHistory();
+    for (const [px, py, pz] of targets) {
+      this.data.remove(px, py, pz);
+      const k = this.data.key(px, py, pz);
+      const mesh = this.meshes.get(k);
+      if (mesh) { this._disposeMesh(mesh); this.meshes.delete(k); }
+    }
     this._changed();
   }
 
   _paint(x, y, z) {
-    if (!this.data.has(x, y, z)) return;
-    this.data.set(x, y, z, this.color);
-    const mesh = this.meshes.get(this.data.key(x, y, z));
-    if (mesh) mesh.material.color.set(this.color);
+    const targets = this._mirrorCoords(x, y, z)
+      .filter(([px, py, pz]) => this.data.has(px, py, pz) && this.data.get(px, py, pz) !== this.color);
+    if (!targets.length) return;
+    this._pushHistory();
+    for (const [px, py, pz] of targets) {
+      this.data.set(px, py, pz, this.color);
+      const mesh = this.meshes.get(this.data.key(px, py, pz));
+      if (mesh) mesh.material.color.set(this.color);
+    }
+    this._changed();
   }
 
   _addMesh(x, y, z, color) {
@@ -193,30 +237,121 @@ class VoxelEditor {
     mesh.material.dispose();
   }
 
-  /* ---------- 公開API ---------- */
-  setMode(mode) { this.mode = mode; }
-  setColor(color) { this.color = color; }
+  /* ---------- ロケーター（銃口/発射点） ---------- */
+  setMuzzle(pt, silent) {
+    this.muzzle = pt ? { x: pt.x, y: pt.y, z: pt.z } : null;
+    this._renderMuzzle();
+    if (!silent) this._changed();
+  }
 
-  clearAll() {
-    for (const mesh of this.meshes.values()) this._disposeMesh(mesh);
-    this.meshes.clear();
-    this.data.clear();
+  _renderMuzzle() {
+    if (this._muzzleMarker) {
+      this.scene.remove(this._muzzleMarker);
+      this._muzzleMarker.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+      this._muzzleMarker = null;
+    }
+    if (!this.muzzle) return;
+    const grp = new THREE.Group();
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(0.3, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0xff3b3b })
+    );
+    grp.add(ball);
+    // 視認用の十字線
+    const len = 1.2;
+    const axes = [[len, 0, 0], [0, len, 0], [0, 0, len]];
+    for (const [ax, ay, az] of axes) {
+      const g = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-ax, -ay, -az), new THREE.Vector3(ax, ay, az),
+      ]);
+      grp.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xff8c8c })));
+    }
+    grp.position.set(this.muzzle.x, this.muzzle.y, this.muzzle.z);
+    this.scene.add(grp);
+    this._muzzleMarker = grp;
+  }
+
+  /* ---------- 履歴(Undo/Redo) ---------- */
+  /** 現在の状態を直列化（履歴・保存共用） */
+  snapshot() {
+    return {
+      sx: this.data.sx, sy: this.data.sy, sz: this.data.sz,
+      voxels: this.data.entries(),
+      muzzle: this.muzzle ? { ...this.muzzle } : null,
+    };
+  }
+
+  _pushHistory() {
+    this.history.undo.push(this.snapshot());
+    if (this.history.undo.length > this.history.limit) this.history.undo.shift();
+    this.history.redo.length = 0;
+    this._historyChanged();
+  }
+
+  /** スナップショットを復元（履歴は積まない）。frame=falseでカメラ維持 */
+  _applySnapshot(s, frame) {
+    const d = new VoxelData(s.sx, s.sy, s.sz);
+    for (const [x, y, z, color] of s.voxels) d.set(x, y, z, color);
+    this._loadDataRaw(d, frame);
+    this.setMuzzle(s.muzzle || null, true);
+  }
+
+  undo() {
+    if (!this.history.undo.length) return;
+    this.history.redo.push(this.snapshot());
+    this._applySnapshot(this.history.undo.pop(), false);
+    this._historyChanged();
     this._changed();
   }
 
-  /** テンプレート等の VoxelData をまるごと読み込み、描画し直す */
-  loadData(voxelData) {
+  redo() {
+    if (!this.history.redo.length) return;
+    this.history.undo.push(this.snapshot());
+    this._applySnapshot(this.history.redo.pop(), false);
+    this._historyChanged();
+    this._changed();
+  }
+
+  _historyChanged() {
+    if (this.onHistory) this.onHistory(this.history.undo.length, this.history.redo.length);
+  }
+
+  /* ---------- 公開API ---------- */
+  setMode(mode) { this.mode = mode; }
+  setColor(color) { this.color = color; }
+  setMirror(axis, on) { this.mirror[axis] = !!on; }
+
+  clearAll() {
+    if (this.data.count() === 0 && !this.muzzle) return;
+    this._pushHistory();
+    for (const mesh of this.meshes.values()) this._disposeMesh(mesh);
+    this.meshes.clear();
+    this.data.clear();
+    this.setMuzzle(null, true);
+    this._changed();
+  }
+
+  /** VoxelData を描画し直す内部処理（履歴を積まない） */
+  _loadDataRaw(voxelData, frame) {
     for (const mesh of this.meshes.values()) this._disposeMesh(mesh);
     this.meshes.clear();
     this.data = voxelData;
     for (const [x, y, z, color] of voxelData.entries()) this._addMesh(x, y, z, color);
     this._rebuildHelpers();
-    this._frameCamera();
+    if (frame !== false) this._frameCamera();
     this._changed();
+  }
+
+  /** テンプレート/取り込み等の VoxelData をまるごと読み込み（履歴に積む） */
+  loadData(voxelData) {
+    this._pushHistory();
+    this._loadDataRaw(voxelData, true);
   }
 
   /** グリッドサイズ変更（範囲外ボクセルは破棄して再描画） */
   resize(sx, sy, sz) {
+    if (sx === this.data.sx && sy === this.data.sy && sz === this.data.sz) return;
+    this._pushHistory();
     this.data.resize(sx, sy, sz);
     // データに合わせてメッシュを作り直す
     for (const mesh of this.meshes.values()) this._disposeMesh(mesh);

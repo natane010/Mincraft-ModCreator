@@ -49,6 +49,7 @@ function buildSpecObject(meta, ctx) {
       voxelCount: ctx.voxelCount,
       elementCount: ctx.boxCount,
     },
+    locators: ctx.muzzle ? { muzzle: [ctx.muzzle.x, ctx.muzzle.y, ctx.muzzle.z] } : null,
   };
 }
 
@@ -100,6 +101,9 @@ function buildSpecMarkdown(meta, ctx) {
   L.push(`- モデル: \`${ctx.modelPath}\``);
   L.push(`- テクスチャ: \`${ctx.texturePath}\` (${ctx.textureSize}×${ctx.textureSize}px)`);
   L.push(`- 形状: グリッド ${ctx.grid.sx}×${ctx.grid.sy}×${ctx.grid.sz} / ボクセル ${ctx.voxelCount} / モデル要素 ${ctx.boxCount}`);
+  if (ctx.muzzle) {
+    L.push(`- 銃口/発射点ロケーター \`muzzle\`: [${ctx.muzzle.x}, ${ctx.muzzle.y}, ${ctx.muzzle.z}]（モデル座標。発射原点・マズルフラッシュ位置に利用）`);
+  }
   L.push('');
 
   L.push('## 実装メモ (For Mod dev / Claude Code)');

@@ -27,7 +27,32 @@
           <button class="mode-btn active" data-mode="add">追加</button>
           <button class="mode-btn" data-mode="remove">削除</button>
           <button class="mode-btn" data-mode="paint">塗装</button>
+          <button class="mode-btn" data-mode="locator">銃口点</button>
         </div>
+        <div class="mode-row history-row">
+          <button id="btn-undo" title="元に戻す (Ctrl+Z)" disabled>↶ 戻す</button>
+          <button id="btn-redo" title="やり直す (Ctrl+Y)" disabled>↷ 進む</button>
+        </div>
+        <div class="mirror-row">
+          <span class="mini">ミラー対称:</span>
+          <label><input type="checkbox" id="mirror-x"> X</label>
+          <label><input type="checkbox" id="mirror-y"> Y</label>
+          <label><input type="checkbox" id="mirror-z"> Z</label>
+          <button id="btn-clear-muzzle" class="tiny" title="銃口点を消去">銃口点クリア</button>
+        </div>
+        <p class="hint">「銃口点」モードで面をクリックすると発射原点(muzzle)を設置（TaCZ/GeckoLib/spec に出力）。</p>
+      </section>
+
+      <section class="panel">
+        <h2>プロジェクト</h2>
+        <div class="mode-row">
+          <button id="btn-save-project" class="wide">💾 保存(.vdf.json)</button>
+        </div>
+        <div class="mode-row">
+          <button id="btn-load-project" class="wide">📂 読み込み / 取り込み</button>
+          <input type="file" id="file-project" accept=".json,.vdf.json,application/json" hidden />
+        </div>
+        <p class="hint">編集途中の作品を保存し、後で続きから再開できます。</p>
       </section>
 
       <section class="panel">
@@ -126,9 +151,20 @@
         <p class="hint">pack_format例: 1.21.4→46, 1.21→34, 1.20.1→15</p>
       </section>
 
+      <section class="panel">
+        <h2>一括出力キュー</h2>
+        <div class="mode-row">
+          <button id="btn-queue-add" class="wide">＋ 現在の内容をキューに追加</button>
+        </div>
+        <ul id="queue-list" class="queue-list"></ul>
+        <button id="btn-export-batch" class="wide" disabled>📦 キューをまとめて出力</button>
+        <p class="hint">複数アイテムを1つのZIPにまとめて出力できます。</p>
+      </section>
+
       <section class="panel actions">
         <button id="btn-clear" class="wide danger">すべてクリア</button>
         <button id="btn-export" class="wide primary">📦 アセットを出力</button>
+        <div id="validation" class="validation"></div>
         <p id="export-info" class="hint"></p>
       </section>
     </aside>
@@ -155,6 +191,8 @@
   <script src="js/exporters/patchouli.js"></script>
   <script src="js/exporters/customModelData.js"></script>
   <script src="js/spec.js"></script>
+  <script src="js/validate.js"></script>
+  <script src="js/project.js"></script>
   <script src="js/packZip.js"></script>
   <script src="js/editor.js"></script>
   <script src="js/main.js"></script>
