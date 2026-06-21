@@ -111,7 +111,11 @@
         <label class="field"><span>出力形式</span>
           <select id="export-target">
             <option value="resourcepack">リソースパック（見た目のみ）</option>
+            <option value="cmd">CustomModelData（Mod不要・見た目差替）</option>
             <option value="kubejs">KubeJS（登録＋レシピ＋ドロップ）</option>
+            <option value="tacz">TaCZ ガンパック（銃）</option>
+            <option value="geckolib">GeckoLib（モブ/銃・要Java）</option>
+            <option value="patchouli">Patchouli 図鑑（入手メモ→本）</option>
           </select></label>
         <label class="field"><span>namespace</span>
           <input type="text" id="namespace" value="natane_forge" /></label>
@@ -144,7 +148,12 @@
   <script src="js/greedyMesh.js"></script>
   <script src="js/texture.js"></script>
   <script src="js/exporters/mcJavaItem.js"></script>
+  <script src="js/exporters/bedrockGeo.js"></script>
   <script src="js/exporters/kubeJs.js"></script>
+  <script src="js/exporters/tacz.js"></script>
+  <script src="js/exporters/geckolib.js"></script>
+  <script src="js/exporters/patchouli.js"></script>
+  <script src="js/exporters/customModelData.js"></script>
   <script src="js/spec.js"></script>
   <script src="js/packZip.js"></script>
   <script src="js/editor.js"></script>

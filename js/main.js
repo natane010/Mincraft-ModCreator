@@ -191,16 +191,37 @@
     const specMarkdown = buildSpecMarkdown(meta, ctx);
 
     const target = $('export-target').value;
+    const ns = { namespace, itemId };
+    const specArg = { itemId, data: spec };
+    let info;
+
     if (target === 'kubejs') {
-      const { files, texturePath } = buildKubeJsFiles(meta, { namespace, itemId }, model);
+      const { files, texturePath } = buildKubeJsFiles(meta, ns, model);
       await exportKubeJs({ itemId, canvas, kubeFiles: files, texturePath, spec, specMarkdown });
-      $('export-info').textContent =
-        `出力完了: ${itemId}_kubejs.zip （KubeJS ${files.length}ファイル / 仕様書同梱）`;
+      info = `${itemId}_kubejs.zip （KubeJS ${files.length}ファイル）`;
+    } else if (target === 'cmd') {
+      const r = buildCmdPack(meta, ns, model, packFormat);
+      await exportFileSet({ zipName: r.zipName, files: r.files, pngEntries: [{ path: r.texturePath, canvas }], spec: specArg, specMarkdown, readme: r.readme });
+      info = `${r.zipName} （CustomModelData / Mod不要）`;
+    } else if (target === 'tacz') {
+      const geo = buildBedrockGeo(editor.data, { identifier: 'geometry.' + itemId });
+      const r = buildTaczPack(meta, ns, geo.geo);
+      await exportFileSet({ zipName: r.zipName, files: r.files, pngEntries: [{ path: r.uvPath, canvas: geo.canvas }, { path: r.slotPath, canvas: geo.canvas }], spec: specArg, specMarkdown, readme: r.readme });
+      info = `${r.zipName} （TaCZガンパック / cube ${geo.boxCount}）`;
+    } else if (target === 'geckolib') {
+      const geo = buildBedrockGeo(editor.data, { identifier: 'geometry.' + itemId });
+      const r = buildGeckolibPack(meta, ns, geo.geo);
+      await exportFileSet({ zipName: r.zipName, files: r.files, pngEntries: [{ path: r.texturePath, canvas: geo.canvas }], spec: specArg, specMarkdown, readme: r.readme });
+      info = `${r.zipName} （GeckoLibアセット＋Java雛形）`;
+    } else if (target === 'patchouli') {
+      const r = buildPatchouliBook(meta, ns);
+      await exportFileSet({ zipName: r.zipName, files: r.files, pngEntries: [], spec: specArg, specMarkdown, readme: r.readme });
+      info = `${r.zipName} （Patchouli図鑑）`;
     } else {
       await exportResourcePack({ namespace, itemId, model, canvas, packFormat, spec, specMarkdown });
-      $('export-info').textContent =
-        `出力完了: ${itemId}.zip （要素 ${boxCount} 個 / テクスチャ ${canvas.width}px / 仕様書同梱）`;
+      info = `${itemId}.zip （要素 ${boxCount} 個 / ${canvas.width}px）`;
     }
+    $('export-info').textContent = `出力完了: ${info} / 仕様書同梱`;
   }
 
   /** Minecraftのリソース名規則: 半角英数 . _ - / のみ・小文字 */

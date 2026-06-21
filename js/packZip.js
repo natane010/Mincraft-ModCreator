@@ -29,6 +29,24 @@ async function exportResourcePack(args) {
   saveAs(out, itemId + '.zip');
 }
 
+/** 汎用: テキストファイル群＋PNG群＋仕様書/READMEをZIP化してDL
+ *  files: [{path,text}], pngEntries: [{path,canvas}]
+ */
+async function exportFileSet(opts) {
+  const { zipName, files, pngEntries, spec, specMarkdown, readme } = opts;
+  const zip = new JSZip();
+  (files || []).forEach((f) => zip.file(f.path, f.text));
+  for (const p of (pngEntries || [])) {
+    const blob = await new Promise((resolve) => p.canvas.toBlob(resolve, 'image/png'));
+    zip.file(p.path, blob);
+  }
+  if (spec) zip.file(spec.itemId + '.spec.json', JSON.stringify(spec.data, null, 2));
+  if (specMarkdown) zip.file('BUILD_SPEC.md', specMarkdown);
+  if (readme) zip.file('README.txt', readme);
+  const out = await zip.generateAsync({ type: 'blob' });
+  saveAs(out, zipName);
+}
+
 /** KubeJS用ZIP（kubejs/ フォルダ一式＋仕様書）を出力 */
 async function exportKubeJs(args) {
   const { itemId, canvas, kubeFiles, texturePath, spec, specMarkdown } = args;
