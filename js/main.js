@@ -22,6 +22,7 @@
   let editor;
   let currentColor = DEFAULT_PALETTE[4];
   const queue = []; // 一括出力キュー: [{snapshot, meta, ids, target}]
+  const customAnims = []; // 手動キーフレームのカスタムアニメ: [{name,length,loop,bone,keyframes}]
 
   function $(id) { return document.getElementById(id); }
 
@@ -44,6 +45,8 @@
     bindEditingExtras();
     bindSelection();
     bindReference();
+    bindCustomAnims();
+    bindBones();
     bindProjectIO();
     bindQueue();
     $('voxel-count').textContent = '0';
@@ -164,6 +167,8 @@
     if (editor.data.count() > 0 &&
         !confirm(`「${t.name}」を読み込むと現在の内容は置き換えられます。よろしいですか？`)) return;
     editor.loadData(t.build());
+    editor.resetBones();
+    refreshBoneUI();
     $('grid-x').value = t.sx;
     $('grid-y').value = t.sy;
     $('grid-z').value = t.sz;
@@ -279,6 +284,10 @@
     });
     $('btn-sel-delete').addEventListener('click', () => editor.deleteSelection());
     $('btn-sel-clear').addEventListener('click', () => editor.clearSelection());
+    $('btn-sel-fill').addEventListener('click', () => {
+      const n = editor.fillSelection();
+      $('export-info').textContent = `${n} ボクセルを塗りつぶしました`;
+    });
 
     document.querySelectorAll('.movepad [data-mv]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -292,8 +301,9 @@
   function updateSelectionUI(sel) {
     const has = !!sel;
     const hasClip = !!(editor.clipboard && editor.clipboard.length);
-    ['btn-sel-copy', 'btn-sel-cut', 'btn-sel-delete', 'btn-sel-clear'].forEach((id) => { $(id).disabled = !has; });
+    ['btn-sel-copy', 'btn-sel-cut', 'btn-sel-delete', 'btn-sel-clear', 'btn-sel-fill'].forEach((id) => { $(id).disabled = !has; });
     $('btn-sel-paste').disabled = !hasClip;
+    const ba = $('btn-bone-assign'); if (ba) ba.disabled = !has;
     document.querySelectorAll('.movepad [data-mv]').forEach((b) => { b.disabled = !has; });
     if (has) {
       const w = sel.max[0] - sel.min[0] + 1, h = sel.max[1] - sel.min[1] + 1, d = sel.max[2] - sel.min[2] + 1;
@@ -355,10 +365,149 @@
     return sel;
   }
 
+  /* ---- カスタムアニメ（手動キーフレーム） ---- */
+  function bindCustomAnims() {
+    addKfRow();
+    $('btn-canim-addkf').addEventListener('click', () => addKfRow());
+    $('btn-canim-commit').addEventListener('click', commitCustomAnim);
+    renderCustomAnimList();
+  }
+
+  function addKfRow(kf) {
+    kf = kf || {};
+    const pos = kf.pos || [0, 0, 0], rot = kf.rot || [0, 0, 0];
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td><input type="number" class="kf-t" step="0.05" min="0" value="${kf.t != null ? kf.t : 0}"></td>` +
+      `<td class="kf-vec">` +
+        `<input type="number" class="kf-px" step="0.5" value="${pos[0]}">` +
+        `<input type="number" class="kf-py" step="0.5" value="${pos[1]}">` +
+        `<input type="number" class="kf-pz" step="0.5" value="${pos[2]}"></td>` +
+      `<td class="kf-vec">` +
+        `<input type="number" class="kf-rx" step="5" value="${rot[0]}">` +
+        `<input type="number" class="kf-ry" step="5" value="${rot[1]}">` +
+        `<input type="number" class="kf-rz" step="5" value="${rot[2]}"></td>` +
+      `<td><button class="tiny kf-del" title="この行を削除">✕</button></td>`;
+    tr.querySelector('.kf-del').addEventListener('click', () => tr.remove());
+    $('canim-kf-body').appendChild(tr);
+  }
+
+  function readKfRows() {
+    const v = (tr, cls) => parseFloat(tr.querySelector('.' + cls).value) || 0;
+    return [...$('canim-kf-body').querySelectorAll('tr')].map((tr) => ({
+      t: v(tr, 'kf-t'),
+      pos: [v(tr, 'kf-px'), v(tr, 'kf-py'), v(tr, 'kf-pz')],
+      rot: [v(tr, 'kf-rx'), v(tr, 'kf-ry'), v(tr, 'kf-rz')],
+    }));
+  }
+
+  function commitCustomAnim() {
+    const name = sanitizeId($('canim-name').value);
+    const kfs = readKfRows();
+    if (!name) { alert('アニメ名を入力してください'); return; }
+    if (!kfs.length) { alert('キーフレームを1つ以上追加してください'); return; }
+    customAnims.push({
+      name,
+      length: parseFloat($('canim-length').value) || 0,
+      loop: $('canim-loop').checked,
+      bone: $('canim-bone').value || 'root',
+      keyframes: kfs,
+    });
+    renderCustomAnimList();
+    $('canim-name').value = '';
+    $('canim-kf-body').innerHTML = '';
+    addKfRow();
+  }
+
+  function renderCustomAnimList() {
+    const ul = $('canim-list');
+    ul.innerHTML = '';
+    customAnims.forEach((a, i) => {
+      const li = document.createElement('li');
+      const span = document.createElement('span');
+      span.textContent = `${i + 1}. ${a.name}（${a.keyframes.length}kf / ${a.bone}${a.loop ? ' / loop' : ''}）`;
+      const del = document.createElement('button');
+      del.className = 'tiny'; del.textContent = '✕'; del.title = '削除';
+      del.addEventListener('click', () => { customAnims.splice(i, 1); renderCustomAnimList(); });
+      li.appendChild(span); li.appendChild(del);
+      ul.appendChild(li);
+    });
+  }
+
+  function applyCustomAnims(list) {
+    customAnims.length = 0;
+    (list || []).forEach((a) => customAnims.push(a));
+    renderCustomAnimList();
+  }
+
+  /* ---- ボーン（関節）分割 ---- */
+  function bindBones() {
+    $('btn-bone-add').addEventListener('click', () => {
+      const name = sanitizeId($('bone-name').value);
+      if (!name) { alert('ボーン名を入力してください'); return; }
+      const pivot = [
+        parseFloat($('bone-pivot-x').value) || 0,
+        parseFloat($('bone-pivot-y').value) || 0,
+        parseFloat($('bone-pivot-z').value) || 0,
+      ];
+      if (!editor.addBone(name, pivot, $('bone-parent').value || '')) {
+        alert('追加できません（名前が重複しているか空です）'); return;
+      }
+      $('bone-name').value = '';
+      refreshBoneUI();
+    });
+    $('btn-bone-assign').addEventListener('click', () => {
+      const target = $('bone-assign-target').value || 'root';
+      const n = editor.assignSelectionToBone(target);
+      $('export-info').textContent = n ? `${n} ボクセルを「${target}」ボーンに割り当てました` : '選択範囲がありません';
+    });
+    refreshBoneUI();
+  }
+
+  function refreshBoneUI() {
+    const ul = $('bone-list');
+    ul.innerHTML = '';
+    editor.bones.forEach((b) => {
+      const li = document.createElement('li');
+      const span = document.createElement('span');
+      span.textContent = b.name === 'root'
+        ? 'root（既定・未割当はここ）'
+        : `${b.name}  pivot[${b.pivot.join(', ')}]${b.parent ? ` ← ${b.parent}` : ''}`;
+      li.appendChild(span);
+      if (b.name !== 'root') {
+        const del = document.createElement('button');
+        del.className = 'tiny'; del.textContent = '✕'; del.title = '削除（rootへ戻す）';
+        del.addEventListener('click', () => { editor.removeBone(b.name); refreshBoneUI(); });
+        li.appendChild(del);
+      }
+      ul.appendChild(li);
+    });
+    fillBoneSelect($('bone-parent'), true);
+    fillBoneSelect($('bone-assign-target'), false);
+    fillBoneSelect($('canim-bone'), false);
+  }
+
+  function fillBoneSelect(sel, withEmpty) {
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '';
+    if (withEmpty) {
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = '（親なし）';
+      sel.appendChild(o);
+    }
+    editor.bones.forEach((b) => {
+      const o = document.createElement('option');
+      o.value = b.name; o.textContent = b.name;
+      sel.appendChild(o);
+    });
+    if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  }
+
   /* ---- プロジェクト 保存/読込/取り込み ---- */
   function bindProjectIO() {
     $('btn-save-project').addEventListener('click', () => {
-      const state = { snapshot: editor.snapshot(), meta: collectMeta(), ids: getIds() };
+      const state = { snapshot: editor.snapshot(), meta: collectMeta(), ids: getIds(), customAnims };
       const name = sanitizeId(getIds().itemId) || 'project';
       downloadProject(serializeProject(state), name);
     });
@@ -366,27 +515,43 @@
     $('btn-load-project').addEventListener('click', () => $('file-project').click());
 
     $('file-project').addEventListener('change', async (e) => {
-      const file = e.target.files && e.target.files[0];
+      const files = e.target.files ? [...e.target.files] : [];
       e.target.value = ''; // 同じファイルを連続で選べるように
-      if (!file) return;
+      if (!files.length) return;
+      // モデルJSON＋（任意で）テクスチャPNGを同時選択できる
+      const imgFile = files.find((f) => /\.(png|jpe?g|gif|webp)$/i.test(f.name) || (f.type || '').indexOf('image/') === 0);
+      const jsonFile = files.find((f) => f !== imgFile);
+      if (!jsonFile) { alert('モデル/プロジェクトのJSONファイルが選択されていません。'); return; }
       try {
-        const obj = await readProjectFile(file);
+        const obj = await readProjectFile(jsonFile);
         const fmt = detectImportFormat(obj);
         if (fmt === 'project') {
           const p = deserializeProject(obj);
           editor.loadData(p.data);
           editor.setMuzzle(p.muzzle, true);
+          editor.setBones(p.bones, p.boneMap);
           applyMeta(p.meta);
           setIds(p.ids);
           syncGridInputs(p.grid);
+          applyCustomAnims(p.customAnims);
+          refreshBoneUI();
           $('export-info').textContent = '読み込み完了' +
             (p.dropped ? `（範囲外の ${p.dropped} 件を除外）` : '');
         } else if (fmt === 'java-model' || fmt === 'bedrock-geo') {
-          const r = fmt === 'java-model' ? voxelizeJavaModel(obj) : voxelizeBedrockGeo(obj);
+          // テクスチャがあれば色を復元するサンプラーを用意
+          let sampler = null, texNote = '';
+          if (imgFile) {
+            try { sampler = await loadImageSampler(await fileToDataUrl(imgFile)); }
+            catch (err) { sampler = null; texNote = ' ※テクスチャ読込失敗: ' + err.message; }
+          }
+          const r = fmt === 'java-model' ? voxelizeJavaModel(obj, { sampler }) : voxelizeBedrockGeo(obj, { sampler });
           editor.loadData(r.data);
+          editor.resetBones();
+          refreshBoneUI();
           syncGridInputs(r.grid);
           $('export-info').textContent = r.info +
-            (r.dropped ? `（範囲外の ${r.dropped} 件を除外）` : '') + ' ※色は仮(要塗り直し)';
+            (r.dropped ? `（範囲外の ${r.dropped} 件を除外）` : '') +
+            (r.colored ? '' : ' ※色は仮(要塗り直し／テクスチャPNGを一緒に選ぶと色を復元)') + texNote;
         } else {
           alert('対応していないファイルです。\n.vdf.json / Java model.json(elements) / Bedrock .geo.json に対応しています。');
         }
@@ -396,6 +561,55 @@
     });
   }
 
+  /* File -> dataURL */
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('ファイル読み込み失敗'));
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  /** テクスチャ画像から、正規化UV矩形の平均色を返すサンプラーを作る */
+  function loadImageSampler(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('画像を読み込めません'));
+      img.onload = () => {
+        const cv = document.createElement('canvas');
+        cv.width = img.width; cv.height = img.height;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0);
+        let id;
+        try { id = cx.getImageData(0, 0, cv.width, cv.height); }
+        catch (err) { reject(new Error('ピクセル取得に失敗: ' + err.message)); return; }
+        resolve(makeSampler(id.data, cv.width, cv.height));
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  function makeSampler(d, W, H) {
+    return (u0, v0, u1, v1) => {
+      let x0 = Math.floor(u0 * W), x1 = Math.ceil(u1 * W);
+      let y0 = Math.floor(v0 * H), y1 = Math.ceil(v1 * H);
+      x0 = Math.max(0, Math.min(W - 1, x0)); x1 = Math.max(x0 + 1, Math.min(W, x1));
+      y0 = Math.max(0, Math.min(H - 1, y0)); y1 = Math.max(y0 + 1, Math.min(H, y1));
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const i = (y * W + x) * 4;
+          if (d[i + 3] < 8) continue; // ほぼ透明は無視
+          r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
+        }
+      }
+      if (!n) return null;
+      const hx = (v) => Math.round(v / n).toString(16).padStart(2, '0');
+      return '#' + hx(r) + hx(g) + hx(b);
+    };
+  }
+
   /* ---- 一括出力キュー ---- */
   function bindQueue() {
     $('btn-queue-add').addEventListener('click', () => {
@@ -403,7 +617,7 @@
       const v = validateExport({ ids, data: editor.data, meta: collectMeta(), target: ids.target });
       renderValidation(v);
       if (v.errors.length) return;
-      queue.push({ snapshot: editor.snapshot(), meta: collectMeta(), ids, target: ids.target, anims: collectAnimSelections() });
+      queue.push({ snapshot: editor.snapshot(), meta: collectMeta(), ids, target: ids.target, anims: collectAnimSelections(), customAnims: customAnims.map((a) => a) });
       renderQueue();
     });
 
@@ -439,6 +653,9 @@
       target: q.target,
       muzzle: q.snapshot.muzzle,
       animSelections: q.anims || [],
+      customAnims: q.customAnims || [],
+      bones: q.snapshot.bones,
+      boneOf: boneOfFromSnapshot(q.snapshot),
     }));
     await exportBundleSet(bundles, 'natane_forge_batch.zip');
     $('export-info').textContent = `一括出力完了: ${bundles.length} アイテム / natane_forge_batch.zip`;
@@ -448,6 +665,12 @@
     const d = new VoxelData(s.sx, s.sy, s.sz);
     for (const [x, y, z, color] of s.voxels) d.set(x, y, z, color);
     return d;
+  }
+
+  /** スナップショットの boneMap から boneOf(x,y,z) を作る */
+  function boneOfFromSnapshot(s) {
+    const map = new Map(s.boneMap || []);
+    return (x, y, z) => map.get(x + ',' + y + ',' + z) || 'root';
   }
 
   /* ---- バリデーション表示 ---- */
@@ -487,7 +710,10 @@
     const muzzle = proj.muzzle || null;
 
     const animSel = proj.animSelections || [];
-    const animJson = buildAnimations(itemId, animSel);
+    const customAnims = proj.customAnims || [];
+    const animJson = buildAnimationJson(itemId, animSel, customAnims);
+    const animNames = animSel.map((s) => s.key).concat(
+      customAnims.filter((a) => a && a.keyframes && a.keyframes.length).map((a) => a.name || 'custom'));
 
     const { model, canvas, boxCount } = buildItemModel(data, { namespace, itemId });
     const ctx = {
@@ -498,7 +724,8 @@
       boxCount, voxelCount: data.count(),
       grid: { sx: data.sx, sy: data.sy, sz: data.sz },
       muzzle,
-      animations: animSel.map((s) => s.key),
+      bones: (proj.bones && proj.bones.length > 1) ? proj.bones : null,
+      animations: animNames,
     };
     const specJson = buildSpecObject(meta, ctx);
     const specMarkdown = buildSpecMarkdown(meta, ctx);
@@ -516,14 +743,14 @@
       files = r.files; pngEntries = [{ path: r.texturePath, canvas }]; readme = r.readme;
       label = 'CustomModelData / Mod不要';
     } else if (target === 'tacz') {
-      const geo = buildBedrockGeo(data, { identifier: 'geometry.' + itemId, muzzle });
+      const geo = buildBedrockGeo(data, { identifier: 'geometry.' + itemId, muzzle, bones: proj.bones, boneOf: proj.boneOf });
       const r = buildTaczPack(meta, ns, geo.geo);
       files = r.files;
       pngEntries = [{ path: r.uvPath, canvas: geo.canvas }, { path: r.slotPath, canvas: geo.canvas }];
       readme = r.readme;
       label = `TaCZガンパック（cube ${geo.boxCount}）`;
     } else if (target === 'geckolib') {
-      const geo = buildBedrockGeo(data, { identifier: 'geometry.' + itemId, muzzle });
+      const geo = buildBedrockGeo(data, { identifier: 'geometry.' + itemId, muzzle, bones: proj.bones, boneOf: proj.boneOf });
       const r = buildGeckolibPack(meta, ns, geo.geo);
       files = r.files; pngEntries = [{ path: r.texturePath, canvas: geo.canvas }]; readme = r.readme;
       label = 'GeckoLibアセット＋Java雛形';
@@ -576,7 +803,8 @@
 
     const bundle = buildExportBundle({
       data: editor.data, meta, ids, target: ids.target, muzzle: editor.muzzle,
-      animSelections: collectAnimSelections(),
+      animSelections: collectAnimSelections(), customAnims,
+      bones: editor.bones, boneOf: (x, y, z) => editor.getBoneOf(x, y, z),
     });
 
     await exportFileSet({

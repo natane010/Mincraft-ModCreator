@@ -32,6 +32,10 @@ class VoxelEditor {
 
     this.reference = null;        // 下絵 {mesh, tex, plane, url, opacity}
 
+    this.bones = [{ name: 'root', pivot: [0, 0, 0], parent: '' }]; // ボーン定義
+    this.boneMap = new Map();     // "x,y,z" -> boneName（未登録は root 扱い）
+    this._bonePivots = null;      // ピボットマーカー group
+
     this._initScene();
     this._initLights();
     this._initHelpers();
@@ -222,6 +226,13 @@ class VoxelEditor {
 
     if (this.mode === 'select') { this._handleSelectClick(hit); return; }
 
+    if (this.mode === 'fill') {
+      if (hit.object === this.basePlane) return;
+      const u = hit.object.userData;
+      this.bucketFill(u.x, u.y, u.z);
+      return;
+    }
+
     // 編集モード（単発クリック）
     this._lastDrawKey = null;
     this._drawAtHit(hit);
@@ -277,6 +288,50 @@ class VoxelEditor {
       if (mesh) mesh.material.color.set(this.color);
     }
     this._changed();
+  }
+
+  /* ---------- 塗りつぶし（バケツ / 範囲） ---------- */
+  /** クリックしたボクセルと連結する同色領域を現在色で塗る（6近傍）。塗った数を返す */
+  bucketFill(x, y, z) {
+    const from = this.data.get(x, y, z);
+    if (from === undefined || from === this.color) return 0;
+    const seen = new Set([this.data.key(x, y, z)]);
+    const stack = [[x, y, z]];
+    const region = [];
+    const NB = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    while (stack.length) {
+      const [cx, cy, cz] = stack.pop();
+      region.push([cx, cy, cz]);
+      for (const [dx, dy, dz] of NB) {
+        const nx = cx + dx, ny = cy + dy, nz = cz + dz, k = this.data.key(nx, ny, nz);
+        if (seen.has(k)) continue;
+        if (this.data.get(nx, ny, nz) === from) { seen.add(k); stack.push([nx, ny, nz]); }
+      }
+    }
+    this._pushHistory();
+    for (const [px, py, pz] of region) {
+      this.data.set(px, py, pz, this.color);
+      const m = this.meshes.get(this.data.key(px, py, pz));
+      if (m) m.material.color.set(this.color);
+    }
+    this._changed();
+    return region.length;
+  }
+
+  /** 選択範囲内の空セルを現在色で埋める（中身を直方体に充填）。追加数を返す */
+  fillSelection() {
+    if (!this.selection) return 0;
+    const { min, max } = this.selection;
+    const targets = [];
+    for (let x = min[0]; x <= max[0]; x++)
+      for (let y = min[1]; y <= max[1]; y++)
+        for (let z = min[2]; z <= max[2]; z++)
+          if (this.data.inBounds(x, y, z) && !this.data.has(x, y, z)) targets.push([x, y, z]);
+    if (!targets.length) return 0;
+    this._pushHistory();
+    for (const [x, y, z] of targets) this._addRaw(x, y, z, this.color);
+    this._changed();
+    return targets.length;
   }
 
   /* ---------- 履歴のストローク制御 ---------- */
@@ -363,6 +418,86 @@ class VoxelEditor {
     this._muzzleMarker = grp;
   }
 
+  /* ---------- ボーン（関節）分割 ---------- */
+  getBoneOf(x, y, z) { return this.boneMap.get(this.data.key(x, y, z)) || 'root'; }
+
+  /** ボーン追加。名前重複/空は false */
+  addBone(name, pivot, parent) {
+    name = String(name || '').trim();
+    if (!name || this.bones.some((b) => b.name === name)) return false;
+    this._pushHistory();
+    this.bones.push({ name, pivot: pivot ? pivot.slice() : [0, 0, 0], parent: parent || '' });
+    this._renderBonePivots();
+    return true;
+  }
+
+  /** ボーン削除（root不可）。所属ボクセル/子ボーンは root へ戻す */
+  removeBone(name) {
+    if (name === 'root') return false;
+    const i = this.bones.findIndex((b) => b.name === name);
+    if (i < 0) return false;
+    this._pushHistory();
+    this.bones.splice(i, 1);
+    for (const [k, v] of [...this.boneMap]) if (v === name) this.boneMap.delete(k);
+    for (const b of this.bones) if (b.parent === name) b.parent = '';
+    this._renderBonePivots();
+    return true;
+  }
+
+  /** 選択範囲内のボクセルを指定ボーンへ割り当てる。割り当て数を返す */
+  assignSelectionToBone(name) {
+    if (!this.selection || !this.bones.some((b) => b.name === name)) return 0;
+    const vox = this._voxelsInSelection();
+    if (!vox.length) return 0;
+    this._pushHistory();
+    for (const [x, y, z] of vox) {
+      const k = this.data.key(x, y, z);
+      if (name === 'root') this.boneMap.delete(k); else this.boneMap.set(k, name);
+    }
+    return vox.length;
+  }
+
+  resetBones() {
+    this.bones = [{ name: 'root', pivot: [0, 0, 0], parent: '' }];
+    this.boneMap.clear();
+    this._renderBonePivots();
+  }
+
+  /** 保存データからボーン構成を復元 */
+  setBones(bones, boneMapEntries) {
+    this.bones = (bones && bones.length)
+      ? bones.map((b) => ({ name: b.name, pivot: (b.pivot || [0, 0, 0]).slice(), parent: b.parent || '' }))
+      : [{ name: 'root', pivot: [0, 0, 0], parent: '' }];
+    this.boneMap = new Map(boneMapEntries || []);
+    this._renderBonePivots();
+  }
+
+  _renderBonePivots() {
+    if (this._bonePivots) {
+      this.scene.remove(this._bonePivots);
+      this._bonePivots.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+      this._bonePivots = null;
+    }
+    const nonRoot = this.bones.filter((b) => b.name !== 'root');
+    if (!nonRoot.length) return;
+    const grp = new THREE.Group();
+    for (const b of nonRoot) {
+      const m = new THREE.Mesh(
+        new THREE.SphereGeometry(0.35, 10, 10),
+        new THREE.MeshBasicMaterial({ color: 0x1ab5b5 })
+      );
+      m.position.set(b.pivot[0], b.pivot[1], b.pivot[2]);
+      const ring = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(0.9, 0.9, 0.9)),
+        new THREE.LineBasicMaterial({ color: 0x6ff0f0 })
+      );
+      ring.position.copy(m.position);
+      grp.add(m); grp.add(ring);
+    }
+    this.scene.add(grp);
+    this._bonePivots = grp;
+  }
+
   /* ---------- 履歴(Undo/Redo) ---------- */
   /** 現在の状態を直列化（履歴・保存共用） */
   snapshot() {
@@ -370,6 +505,8 @@ class VoxelEditor {
       sx: this.data.sx, sy: this.data.sy, sz: this.data.sz,
       voxels: this.data.entries(),
       muzzle: this.muzzle ? { ...this.muzzle } : null,
+      bones: this.bones.map((b) => ({ name: b.name, pivot: b.pivot.slice(), parent: b.parent })),
+      boneMap: [...this.boneMap.entries()],
     };
   }
 
@@ -386,6 +523,7 @@ class VoxelEditor {
     for (const [x, y, z, color] of s.voxels) d.set(x, y, z, color);
     this._loadDataRaw(d, frame);
     this.setMuzzle(s.muzzle || null, true);
+    if (s.bones) this.setBones(s.bones, s.boneMap);
   }
 
   undo() {

@@ -64,4 +64,64 @@ function buildAnimations(id, sel) {
   return { format_version: '1.8.0', animations };
 }
 
+/* ---------- 手動キーフレーム（カスタムアニメ） ---------- */
+function _vec3(v) { v = v || [0, 0, 0]; return [Number(v[0]) || 0, Number(v[1]) || 0, Number(v[2]) || 0]; }
+function _nonzero(v) { return !!(v && (Number(v[0]) || Number(v[1]) || Number(v[2]))); }
+function _animName(s) { return (String(s || '').toLowerCase().replace(/[^a-z0-9_]/g, '_')) || 'custom'; }
+
+/**
+ * customAnims: [{ name, length, loop, bone, keyframes:[{t, pos:[x,y,z], rot:[x,y,z]}] }]
+ * -> Bedrock animations マップ（buildAnimations の結果とマージ可能）。無ければ null。
+ * pos/rot は、そのボーンで一度でも非0が使われた channel のみ全keyframeに出力する
+ * （0へ戻すキーフレームも保持して綺麗に補間させるため）。
+ */
+function buildCustomAnimations(id, customAnims) {
+  const list = (customAnims || []).filter((a) => a && a.keyframes && a.keyframes.length);
+  if (!list.length) return null;
+
+  const animations = {};
+  for (const a of list) {
+    const byBone = {};
+    for (const kf of a.keyframes) {
+      const bone = kf.bone || a.bone || ANIM_BONE;
+      (byBone[bone] = byBone[bone] || []).push(kf);
+    }
+    const bones = {};
+    let maxT = 0;
+    for (const bone of Object.keys(byBone)) {
+      const kfs = byBone[bone].slice().sort((p, q) => (Number(p.t) || 0) - (Number(q.t) || 0));
+      const usePos = kfs.some((kf) => _nonzero(kf.pos));
+      const useRot = kfs.some((kf) => _nonzero(kf.rot));
+      if (!usePos && !useRot) continue;
+      const b = {};
+      if (usePos) b.position = {};
+      if (useRot) b.rotation = {};
+      for (const kf of kfs) {
+        const t = Math.max(0, Number(kf.t) || 0);
+        maxT = Math.max(maxT, t);
+        const ts = t.toFixed(2);
+        if (usePos) b.position[ts] = _vec3(kf.pos);
+        if (useRot) b.rotation[ts] = _vec3(kf.rot);
+      }
+      bones[bone] = b;
+    }
+    if (!Object.keys(bones).length) continue;
+    const L = (a.length && a.length > 0) ? a.length : maxT;
+    const entry = { animation_length: Number((L || 0).toFixed(2)) };
+    if (a.loop) entry.loop = true;
+    entry.bones = bones;
+    animations['animation.' + id + '.' + _animName(a.name)] = entry;
+  }
+  return Object.keys(animations).length ? animations : null;
+}
+
+/** プリセット選択＋カスタムを1つの .animation.json にまとめる。両方空なら null */
+function buildAnimationJson(id, presetSel, customAnims) {
+  const preset = buildAnimations(id, presetSel);
+  const custom = buildCustomAnimations(id, customAnims);
+  if (!preset && !custom) return null;
+  const animations = Object.assign({}, preset ? preset.animations : {}, custom || {});
+  return { format_version: '1.8.0', animations };
+}
+
 function animationFileName(id) { return id + '.animation.json'; }

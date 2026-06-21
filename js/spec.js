@@ -48,6 +48,9 @@ function buildSpecObject(meta, ctx) {
       grid: ctx.grid,
       voxelCount: ctx.voxelCount,
       elementCount: ctx.boxCount,
+      bones: (ctx.bones && ctx.bones.length)
+        ? ctx.bones.map((b) => ({ name: b.name, pivot: b.pivot, parent: b.parent || null }))
+        : null,
     },
     locators: ctx.muzzle ? { muzzle: [ctx.muzzle.x, ctx.muzzle.y, ctx.muzzle.z] } : null,
     animations: (ctx.animations && ctx.animations.length) ? ctx.animations : null,
@@ -105,8 +108,14 @@ function buildSpecMarkdown(meta, ctx) {
   if (ctx.muzzle) {
     L.push(`- 銃口/発射点ロケーター \`muzzle\`: [${ctx.muzzle.x}, ${ctx.muzzle.y}, ${ctx.muzzle.z}]（モデル座標。発射原点・マズルフラッシュ位置に利用）`);
   }
+  if (ctx.bones && ctx.bones.length) {
+    L.push(`- ボーン(関節): ${ctx.bones.map((b) => b.name + (b.parent ? `(親:${b.parent})` : '')).join(', ')}`);
+    ctx.bones.filter((b) => b.name !== 'root').forEach((b) => {
+      L.push(`    - \`${b.name}\` pivot [${b.pivot.join(', ')}]${b.parent ? ` / 親 \`${b.parent}\`` : ''}`);
+    });
+  }
   if (ctx.animations && ctx.animations.length) {
-    L.push(`- アニメーション: ${ctx.animations.join(', ')}（\`${ctx.itemId}.animation.json\` / root骨を駆動）`);
+    L.push(`- アニメーション: ${ctx.animations.join(', ')}（\`${ctx.itemId}.animation.json\` / 対象ボーンを駆動）`);
   }
   L.push('');
 

@@ -27,6 +27,9 @@ function serializeProject(state) {
     voxels: s.voxels,
     muzzle: s.muzzle || null,
     meta: state.meta || null,
+    bones: (s.bones && s.bones.length) ? s.bones : null,      // [{name,pivot,parent}]
+    boneMap: (s.boneMap && s.boneMap.length) ? s.boneMap : null, // [["x,y,z","name"], ...]
+    customAnims: state.customAnims || null,                   // [{name,length,loop,bone,keyframes}]
   };
 }
 
@@ -53,6 +56,9 @@ function deserializeProject(obj) {
       ? { x: +obj.muzzle.x || 0, y: +obj.muzzle.y || 0, z: +obj.muzzle.z || 0 } : null,
     meta: obj.meta || null,
     ids: obj.ids || {},
+    bones: Array.isArray(obj.bones) ? obj.bones : null,
+    boneMap: Array.isArray(obj.boneMap) ? obj.boneMap : null,
+    customAnims: Array.isArray(obj.customAnims) ? obj.customAnims : [],
     dropped,
   };
 }

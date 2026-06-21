@@ -2,24 +2,56 @@
  * ボクセル -> Bedrock形式ジオメトリ(.geo.json, format_version 1.12.0)変換。
  * TaCZ と GeckoLib が共通で消費する。
  *
- * ・greedyBoxes で同色直方体に結合 → 各boxを1 cubeに
- * ・per-face UV はテクセル単位(0..texture_width)。色1つ=1テクセルを指す
+ * ・ボーン分割対応: opts.bones（[{name,pivot,parent}]）と opts.boneOf(x,y,z)->name
+ *   が与えられたら、ボーンごとにボクセルを分けて greedyMeshing し、複数 bone を出力。
+ *   未指定なら全ボクセルを単一の 'root' bone にまとめる（従来動作）。
+ * ・テクスチャは全ボーン共通の1枚パレットPNG（色1つ=1テクセル）。
  * ・origin = 立方体の最小角（ボクセル座標そのまま。Bedrockは+8オフセット無し）
  *
  * 返り値: { geo, canvas, boxCount }
  */
 const _GEO_FACES = ['north', 'south', 'east', 'west', 'up', 'down'];
 
+/** opts から「ボーン名 -> そのボーンのboxes」を作る */
+function _geoBoneGroups(data, opts) {
+  const def = (opts.bones && opts.bones.length)
+    ? opts.bones : [{ name: 'root', pivot: [0, 0, 0], parent: '' }];
+  const names = def.map((b) => b.name);
+  const boneOf = opts.boneOf || (() => names[0]);
+
+  const buckets = {};
+  for (const n of names) buckets[n] = new VoxelData(data.sx, data.sy, data.sz);
+  for (const [x, y, z, c] of data.entries()) {
+    let n = boneOf(x, y, z);
+    if (!buckets[n]) n = names[0];
+    buckets[n].set(x, y, z, c);
+  }
+  return def.map((b) => ({
+    name: b.name, pivot: b.pivot || [0, 0, 0], parent: b.parent || '',
+    boxes: greedyBoxes(buckets[b.name]),
+  }));
+}
+
 function buildBedrockGeo(data, opts) {
-  const boxes = greedyBoxes(data);
-  const colors = [...new Set(boxes.map(b => b.color))];
+  opts = opts || {};
+  const groups = _geoBoneGroups(data, opts);
+
+  // 全ボーンの色を集めて共有パレットを作る
+  const colors = [...new Set(groups.reduce((a, g) => a.concat(g.boxes.map((b) => b.color)), []))];
   const palette = buildPalette(colors);
 
-  const cubes = boxes.map(b => {
-    const { px, py } = palette.index.get(b.color);
-    const uv = {};
-    for (const f of _GEO_FACES) uv[f] = { uv: [px, py], uv_size: [1, 1] };
-    return { origin: [b.x, b.y, b.z], size: [b.w, b.h, b.d], uv };
+  let boxCount = 0;
+  const bones = groups.map((g) => {
+    const cubes = g.boxes.map((b) => {
+      const { px, py } = palette.index.get(b.color);
+      const uv = {};
+      for (const f of _GEO_FACES) uv[f] = { uv: [px, py], uv_size: [1, 1] };
+      return { origin: [b.x, b.y, b.z], size: [b.w, b.h, b.d], uv };
+    });
+    boxCount += cubes.length;
+    const bone = { name: g.name, pivot: g.pivot, cubes };
+    if (g.parent) bone.parent = g.parent;
+    return bone;
   });
 
   const h = data.sy, w = Math.max(data.sx, data.sz);
@@ -34,17 +66,15 @@ function buildBedrockGeo(data, opts) {
         visible_bounds_height: Math.ceil(h / 16) + 2,
         visible_bounds_offset: [0, (h / 16) / 2, 0],
       },
-      bones: [{ name: 'root', pivot: [0, 0, 0], cubes }],
+      bones,
     }],
   };
 
-  // 銃口/発射点ロケーター（TaCZ/GeckoLib のアニメ・発射原点に利用）
+  // 銃口/発射点ロケーター（root骨に付与。TaCZ/GeckoLib のアニメ・発射原点に利用）
   if (opts.muzzle) {
     const m = opts.muzzle;
-    geo['minecraft:geometry'][0].bones[0].locators = {
-      muzzle: [m.x, m.y, m.z],
-    };
+    bones[0].locators = { muzzle: [m.x, m.y, m.z] };
   }
 
-  return { geo, canvas: renderPaletteCanvas(palette), boxCount: boxes.length };
+  return { geo, canvas: renderPaletteCanvas(palette), boxCount };
 }
