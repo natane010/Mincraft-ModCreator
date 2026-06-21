@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Natane's Voxel &amp; Data Forge</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header id="topbar">
+    <h1>🛠️ Natane's Voxel &amp; Data Forge <span class="tag">MVP</span></h1>
+    <div class="status">ボクセル数: <b id="voxel-count">0</b></div>
+  </header>
+
+  <div id="app">
+    <aside id="sidebar">
+      <section class="panel">
+        <h2>モード</h2>
+        <div class="mode-row">
+          <button class="mode-btn active" data-mode="add">追加</button>
+          <button class="mode-btn" data-mode="remove">削除</button>
+          <button class="mode-btn" data-mode="paint">塗装</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>カラー</h2>
+        <div id="palette" class="palette"></div>
+        <label class="field">
+          <span>カスタム色</span>
+          <input type="color" id="color-picker" value="#3a8ee6" />
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2>グリッド（可変）</h2>
+        <div class="grid-inputs">
+          <label>X<input type="number" id="grid-x" value="16" min="1" max="64" /></label>
+          <label>Y<input type="number" id="grid-y" value="16" min="1" max="64" /></label>
+          <label>Z<input type="number" id="grid-z" value="16" min="1" max="64" /></label>
+        </div>
+        <button id="btn-resize" class="wide">サイズ適用</button>
+        <p class="hint">アイテムは16推奨。モブ等は大きめに。</p>
+      </section>
+
+      <section class="panel">
+        <h2>出力設定</h2>
+        <label class="field"><span>namespace</span>
+          <input type="text" id="namespace" value="natane_forge" /></label>
+        <label class="field"><span>アイテムID</span>
+          <input type="text" id="item-id" value="custom_item" /></label>
+        <label class="field"><span>pack_format</span>
+          <input type="number" id="pack-format" value="34" min="1" /></label>
+        <p class="hint">pack_format例: 1.21.4→46, 1.21→34, 1.20.1→15</p>
+      </section>
+
+      <section class="panel actions">
+        <button id="btn-clear" class="wide danger">すべてクリア</button>
+        <button id="btn-export" class="wide primary">📦 アセットを出力</button>
+        <p id="export-info" class="hint"></p>
+      </section>
+    </aside>
+
+    <main id="canvas-container"></main>
+  </div>
+
+  <!-- ライブラリ(CDN / UMDグローバル版): file:// 直開きでも動作 -->
+  <script src="https://unpkg.com/three@0.137.5/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.137.5/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+  <!-- アプリ本体（読み込み順が依存順） -->
+  <script src="js/voxelData.js"></script>
+  <script src="js/greedyMesh.js"></script>
+  <script src="js/texture.js"></script>
+  <script src="js/exporters/mcJavaItem.js"></script>
+  <script src="js/packZip.js"></script>
+  <script src="js/editor.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
