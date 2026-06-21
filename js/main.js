@@ -34,6 +34,7 @@
       $('btn-undo').disabled = u === 0;
       $('btn-redo').disabled = r === 0;
     };
+    editor.onSelection = updateSelectionUI;
 
     buildPalette();
     buildTemplateMenu();
@@ -41,6 +42,8 @@
     bindModeButtons();
     bindControls();
     bindEditingExtras();
+    bindSelection();
+    bindReference();
     bindProjectIO();
     bindQueue();
     $('voxel-count').textContent = '0';
@@ -235,15 +238,121 @@
       editor.setMuzzle(null);
     });
 
+    $('drag-draw').addEventListener('change', (e) => editor.setDragDraw(e.target.checked));
+
     // キーボードショートカット（テキスト入力中は無効）
     document.addEventListener('keydown', (e) => {
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
       const k = e.key.toLowerCase();
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && !e.shiftKey && k === 'z') { e.preventDefault(); editor.undo(); }
-      else if ((mod && k === 'y') || (mod && e.shiftKey && k === 'z')) { e.preventDefault(); editor.redo(); }
+      if (mod && !e.shiftKey && k === 'z') { e.preventDefault(); editor.undo(); return; }
+      if ((mod && k === 'y') || (mod && e.shiftKey && k === 'z')) { e.preventDefault(); editor.redo(); return; }
+
+      // 選択範囲の移動（矢印キー / PageUp・Down）
+      if (editor.mode === 'select' && editor.selection) {
+        const mv = {
+          ArrowLeft: [-1, 0, 0], ArrowRight: [1, 0, 0],
+          ArrowUp: [0, 1, 0], ArrowDown: [0, -1, 0],
+          PageUp: [0, 0, -1], PageDown: [0, 0, 1],
+        }[e.key];
+        if (mv) { e.preventDefault(); editor.moveSelection(mv[0], mv[1], mv[2]); }
+      }
     });
+  }
+
+  /* ---- 領域選択 ---- */
+  function bindSelection() {
+    $('btn-sel-copy').addEventListener('click', () => {
+      const n = editor.copySelection();
+      updateSelectionUI(editor.selection);
+      $('export-info').textContent = `${n} ボクセルをコピーしました`;
+    });
+    $('btn-sel-cut').addEventListener('click', () => {
+      const n = editor.cutSelection();
+      updateSelectionUI(editor.selection);
+      $('export-info').textContent = `${n} ボクセルをカットしました`;
+    });
+    $('btn-sel-paste').addEventListener('click', () => {
+      const n = editor.pasteClipboard();
+      $('export-info').textContent = `${n} ボクセルを貼り付けました`;
+    });
+    $('btn-sel-delete').addEventListener('click', () => editor.deleteSelection());
+    $('btn-sel-clear').addEventListener('click', () => editor.clearSelection());
+
+    document.querySelectorAll('.movepad [data-mv]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const [dx, dy, dz] = btn.dataset.mv.split(',').map(Number);
+        editor.moveSelection(dx, dy, dz);
+      });
+    });
+    updateSelectionUI(null);
+  }
+
+  function updateSelectionUI(sel) {
+    const has = !!sel;
+    const hasClip = !!(editor.clipboard && editor.clipboard.length);
+    ['btn-sel-copy', 'btn-sel-cut', 'btn-sel-delete', 'btn-sel-clear'].forEach((id) => { $(id).disabled = !has; });
+    $('btn-sel-paste').disabled = !hasClip;
+    document.querySelectorAll('.movepad [data-mv]').forEach((b) => { b.disabled = !has; });
+    if (has) {
+      const w = sel.max[0] - sel.min[0] + 1, h = sel.max[1] - sel.min[1] + 1, d = sel.max[2] - sel.min[2] + 1;
+      $('selection-info').textContent = `選択中: ${w}×${h}×${d}` + (hasClip ? `（クリップボード ${editor.clipboard.length}）` : '');
+    } else {
+      $('selection-info').textContent = '選択モードで2点をクリックして範囲を指定' + (hasClip ? `（クリップボード ${editor.clipboard.length}）` : '');
+    }
+  }
+
+  /* ---- 下絵リファレンス ---- */
+  function bindReference() {
+    $('btn-ref-load').addEventListener('click', () => $('file-ref').click());
+
+    $('file-ref').addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        editor.setReference(reader.result, {
+          plane: $('ref-plane').value,
+          opacity: (parseInt($('ref-opacity').value, 10) || 50) / 100,
+        });
+        $('btn-ref-clear').disabled = false;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    $('ref-plane').addEventListener('change', () => {
+      if (editor.reference) {
+        editor.setReference(editor.reference.url, {
+          plane: $('ref-plane').value,
+          opacity: (parseInt($('ref-opacity').value, 10) || 50) / 100,
+        });
+      }
+    });
+
+    $('ref-opacity').addEventListener('input', (e) => {
+      const pct = parseInt(e.target.value, 10) || 0;
+      $('ref-op-val').textContent = pct + '%';
+      editor.setReferenceOpacity(pct / 100);
+    });
+
+    $('btn-ref-clear').addEventListener('click', () => {
+      editor.clearReference();
+      $('btn-ref-clear').disabled = true;
+    });
+  }
+
+  /* ---- アニメーション選択 ---- */
+  function collectAnimSelections() {
+    const keys = ['idle', 'fire', 'reload', 'draw'];
+    const sel = [];
+    keys.forEach((k) => {
+      if ($('anim-' + k).checked) {
+        sel.push({ key: k, length: parseFloat($('anim-' + k + '-len').value) || undefined });
+      }
+    });
+    return sel;
   }
 
   /* ---- プロジェクト 保存/読込/取り込み ---- */
@@ -262,16 +371,25 @@
       if (!file) return;
       try {
         const obj = await readProjectFile(file);
-        const p = deserializeProject(obj);
-        editor.loadData(p.data);
-        editor.setMuzzle(p.muzzle, true);
-        applyMeta(p.meta);
-        setIds(p.ids);
-        $('grid-x').value = p.grid.sx;
-        $('grid-y').value = p.grid.sy;
-        $('grid-z').value = p.grid.sz;
-        $('export-info').textContent = '読み込み完了' +
-          (p.dropped ? `（範囲外の ${p.dropped} 件を除外）` : '');
+        const fmt = detectImportFormat(obj);
+        if (fmt === 'project') {
+          const p = deserializeProject(obj);
+          editor.loadData(p.data);
+          editor.setMuzzle(p.muzzle, true);
+          applyMeta(p.meta);
+          setIds(p.ids);
+          syncGridInputs(p.grid);
+          $('export-info').textContent = '読み込み完了' +
+            (p.dropped ? `（範囲外の ${p.dropped} 件を除外）` : '');
+        } else if (fmt === 'java-model' || fmt === 'bedrock-geo') {
+          const r = fmt === 'java-model' ? voxelizeJavaModel(obj) : voxelizeBedrockGeo(obj);
+          editor.loadData(r.data);
+          syncGridInputs(r.grid);
+          $('export-info').textContent = r.info +
+            (r.dropped ? `（範囲外の ${r.dropped} 件を除外）` : '') + ' ※色は仮(要塗り直し)';
+        } else {
+          alert('対応していないファイルです。\n.vdf.json / Java model.json(elements) / Bedrock .geo.json に対応しています。');
+        }
       } catch (err) {
         alert('読み込みに失敗しました: ' + err.message);
       }
@@ -285,7 +403,7 @@
       const v = validateExport({ ids, data: editor.data, meta: collectMeta(), target: ids.target });
       renderValidation(v);
       if (v.errors.length) return;
-      queue.push({ snapshot: editor.snapshot(), meta: collectMeta(), ids, target: ids.target });
+      queue.push({ snapshot: editor.snapshot(), meta: collectMeta(), ids, target: ids.target, anims: collectAnimSelections() });
       renderQueue();
     });
 
@@ -320,6 +438,7 @@
       ids: q.ids,
       target: q.target,
       muzzle: q.snapshot.muzzle,
+      animSelections: q.anims || [],
     }));
     await exportBundleSet(bundles, 'natane_forge_batch.zip');
     $('export-info').textContent = `一括出力完了: ${bundles.length} アイテム / natane_forge_batch.zip`;
@@ -345,6 +464,12 @@
     v.warnings.forEach((m) => add('v-warn', '⚠ ', m));
   }
 
+  function syncGridInputs(grid) {
+    $('grid-x').value = grid.sx;
+    $('grid-y').value = grid.sy;
+    $('grid-z').value = grid.sz;
+  }
+
   function clampSize(v) {
     let n = parseInt(v, 10);
     if (isNaN(n)) n = 16;
@@ -361,6 +486,9 @@
     const ns = { namespace, itemId };
     const muzzle = proj.muzzle || null;
 
+    const animSel = proj.animSelections || [];
+    const animJson = buildAnimations(itemId, animSel);
+
     const { model, canvas, boxCount } = buildItemModel(data, { namespace, itemId });
     const ctx = {
       namespace, itemId,
@@ -370,6 +498,7 @@
       boxCount, voxelCount: data.count(),
       grid: { sx: data.sx, sy: data.sy, sz: data.sz },
       muzzle,
+      animations: animSel.map((s) => s.key),
     };
     const specJson = buildSpecObject(meta, ctx);
     const specMarkdown = buildSpecMarkdown(meta, ctx);
@@ -413,8 +542,24 @@
       label = `リソースパック（要素 ${boxCount} / ${canvas.width}px）`;
     }
 
+    // アニメーション同梱（TaCZ/GeckoLib のみ。GeckoLibは雛形を上書き）
+    if (animJson) {
+      const animText = JSON.stringify(animJson, null, 2);
+      if (target === 'geckolib') {
+        replaceOrAddFile(files, `assets/${namespace}/animations/${itemId}.animation.json`, animText);
+      } else if (target === 'tacz') {
+        replaceOrAddFile(files, `${namespace}/animations/${itemId}.animation.json`, animText);
+        label += ` ＋アニメ${animSel.length}`;
+      }
+    }
+
     const zipName = itemId + '_' + target + '.zip';
     return { namespace, itemId, target, files, pngEntries, readme, specJson, specMarkdown, label, zipName, canvas };
+  }
+
+  function replaceOrAddFile(files, path, text) {
+    const i = files.findIndex((f) => f.path === path);
+    if (i >= 0) files[i] = { path, text }; else files.push({ path, text });
   }
 
   async function onExport() {
@@ -431,6 +576,7 @@
 
     const bundle = buildExportBundle({
       data: editor.data, meta, ids, target: ids.target, muzzle: editor.muzzle,
+      animSelections: collectAnimSelections(),
     });
 
     await exportFileSet({

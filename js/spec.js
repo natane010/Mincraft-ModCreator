@@ -50,6 +50,7 @@ function buildSpecObject(meta, ctx) {
       elementCount: ctx.boxCount,
     },
     locators: ctx.muzzle ? { muzzle: [ctx.muzzle.x, ctx.muzzle.y, ctx.muzzle.z] } : null,
+    animations: (ctx.animations && ctx.animations.length) ? ctx.animations : null,
   };
 }
 
@@ -103,6 +104,9 @@ function buildSpecMarkdown(meta, ctx) {
   L.push(`- 形状: グリッド ${ctx.grid.sx}×${ctx.grid.sy}×${ctx.grid.sz} / ボクセル ${ctx.voxelCount} / モデル要素 ${ctx.boxCount}`);
   if (ctx.muzzle) {
     L.push(`- 銃口/発射点ロケーター \`muzzle\`: [${ctx.muzzle.x}, ${ctx.muzzle.y}, ${ctx.muzzle.z}]（モデル座標。発射原点・マズルフラッシュ位置に利用）`);
+  }
+  if (ctx.animations && ctx.animations.length) {
+    L.push(`- アニメーション: ${ctx.animations.join(', ')}（\`${ctx.itemId}.animation.json\` / root骨を駆動）`);
   }
   L.push('');
 

@@ -23,11 +23,12 @@
 
       <section class="panel">
         <h2>モード</h2>
-        <div class="mode-row">
+        <div class="mode-row mode-row-wrap">
           <button class="mode-btn active" data-mode="add">追加</button>
           <button class="mode-btn" data-mode="remove">削除</button>
           <button class="mode-btn" data-mode="paint">塗装</button>
           <button class="mode-btn" data-mode="locator">銃口点</button>
+          <button class="mode-btn" data-mode="select">選択</button>
         </div>
         <div class="mode-row history-row">
           <button id="btn-undo" title="元に戻す (Ctrl+Z)" disabled>↶ 戻す</button>
@@ -40,7 +41,47 @@
           <label><input type="checkbox" id="mirror-z"> Z</label>
           <button id="btn-clear-muzzle" class="tiny" title="銃口点を消去">銃口点クリア</button>
         </div>
-        <p class="hint">「銃口点」モードで面をクリックすると発射原点(muzzle)を設置（TaCZ/GeckoLib/spec に出力）。</p>
+        <label class="toggle"><input type="checkbox" id="drag-draw"> 連続描画（左ドラッグで描く／右ドラッグで回転）</label>
+        <p class="hint">「銃口点」で発射原点(muzzle)を設置。「選択」で2点クリックして範囲を囲みます。</p>
+      </section>
+
+      <section class="panel">
+        <h2>選択範囲（コピー/移動）</h2>
+        <div id="selection-info" class="mini">選択モードで2点をクリックして範囲を指定</div>
+        <div class="mode-row">
+          <button id="btn-sel-copy" class="tiny" disabled>コピー</button>
+          <button id="btn-sel-cut" class="tiny" disabled>カット</button>
+          <button id="btn-sel-paste" class="tiny" disabled>ペースト</button>
+        </div>
+        <div class="mode-row">
+          <button id="btn-sel-delete" class="tiny" disabled>範囲を削除</button>
+          <button id="btn-sel-clear" class="tiny" disabled>選択解除</button>
+        </div>
+        <div class="movepad">
+          <span class="mini">移動:</span>
+          <button data-mv="-1,0,0" class="tiny">X−</button><button data-mv="1,0,0" class="tiny">X＋</button>
+          <button data-mv="0,-1,0" class="tiny">Y−</button><button data-mv="0,1,0" class="tiny">Y＋</button>
+          <button data-mv="0,0,-1" class="tiny">Z−</button><button data-mv="0,0,1" class="tiny">Z＋</button>
+        </div>
+        <p class="hint">選択中は矢印キー=XY移動 / PageUp・PageDown=Z移動。</p>
+      </section>
+
+      <section class="panel">
+        <h2>下絵リファレンス</h2>
+        <div class="mode-row">
+          <button id="btn-ref-load" class="wide">🖼️ 画像を読み込む</button>
+          <input type="file" id="file-ref" accept="image/*" hidden />
+        </div>
+        <label class="field"><span>配置面</span>
+          <select id="ref-plane">
+            <option value="front">前面（XY / 正面トレース）</option>
+            <option value="side">側面（ZY / 横向き）</option>
+            <option value="top">上面（XZ / 真上から）</option>
+          </select></label>
+        <label class="field"><span>不透明度 <b id="ref-op-val">50%</b></span>
+          <input type="range" id="ref-opacity" min="0" max="100" value="50" /></label>
+        <button id="btn-ref-clear" class="wide" disabled>下絵を消す</button>
+        <p class="hint">参照画像をなぞって立体化できます（グリッド面に合わせて表示）。</p>
       </section>
 
       <section class="panel">
@@ -52,7 +93,7 @@
           <button id="btn-load-project" class="wide">📂 読み込み / 取り込み</button>
           <input type="file" id="file-project" accept=".json,.vdf.json,application/json" hidden />
         </div>
-        <p class="hint">編集途中の作品を保存し、後で続きから再開できます。</p>
+        <p class="hint">.vdf.json で続きから再開。Java model.json / Bedrock .geo.json も形状取り込み可（色はパレット循環・要素ごと）。</p>
       </section>
 
       <section class="panel">
@@ -152,6 +193,17 @@
       </section>
 
       <section class="panel">
+        <h2>アニメーション（TaCZ / GeckoLib）</h2>
+        <div class="anim-list">
+          <label class="anim"><input type="checkbox" id="anim-idle"> idle（待機・揺れ）<input type="number" id="anim-idle-len" value="2" step="0.1" min="0.1" title="長さ(秒)"></label>
+          <label class="anim"><input type="checkbox" id="anim-fire"> fire（発射反動）<input type="number" id="anim-fire-len" value="0.2" step="0.05" min="0.05"></label>
+          <label class="anim"><input type="checkbox" id="anim-reload"> reload（リロード）<input type="number" id="anim-reload-len" value="1.5" step="0.1" min="0.1"></label>
+          <label class="anim"><input type="checkbox" id="anim-draw"> draw（取り出し）<input type="number" id="anim-draw-len" value="0.5" step="0.1" min="0.1"></label>
+        </div>
+        <p class="hint">選択すると .animation.json を生成し、TaCZ/GeckoLib出力に同梱します（root骨を動かす簡易版）。</p>
+      </section>
+
+      <section class="panel">
         <h2>一括出力キュー</h2>
         <div class="mode-row">
           <button id="btn-queue-add" class="wide">＋ 現在の内容をキューに追加</button>
@@ -190,9 +242,11 @@
   <script src="js/exporters/geckolib.js"></script>
   <script src="js/exporters/patchouli.js"></script>
   <script src="js/exporters/customModelData.js"></script>
+  <script src="js/exporters/animation.js"></script>
   <script src="js/spec.js"></script>
   <script src="js/validate.js"></script>
   <script src="js/project.js"></script>
+  <script src="js/importModel.js"></script>
   <script src="js/packZip.js"></script>
   <script src="js/editor.js"></script>
   <script src="js/main.js"></script>
