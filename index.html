@@ -27,6 +27,7 @@
           <button class="mode-btn active" data-mode="add">追加</button>
           <button class="mode-btn" data-mode="remove">削除</button>
           <button class="mode-btn" data-mode="paint">塗装</button>
+          <button class="mode-btn" data-mode="face">面塗</button>
           <button class="mode-btn" data-mode="fill">塗潰</button>
           <button class="mode-btn" data-mode="locator">銃口点</button>
           <button class="mode-btn" data-mode="select">選択</button>
@@ -43,7 +44,7 @@
           <button id="btn-clear-muzzle" class="tiny" title="銃口点を消去">銃口点クリア</button>
         </div>
         <label class="toggle"><input type="checkbox" id="drag-draw"> 連続描画（左ドラッグで描く／右ドラッグで回転）</label>
-        <p class="hint">「塗潰」はクリックした連結同色領域を現在色に一括変更。「銃口点」で発射原点(muzzle)を設置。「選択」で2点クリックして範囲を囲みます。</p>
+        <p class="hint">「塗潰」はクリックした連結同色領域を現在色に一括変更。「面塗」=クリックした面だけを現在色に（第1版は面単位の単色、ミラー非対応）。「銃口点」で発射原点(muzzle)を設置。「選択」で2点クリックして範囲を囲みます。</p>
       </section>
 
       <section class="panel">
@@ -58,6 +59,12 @@
           <button id="btn-sel-delete" class="tiny" disabled>範囲を削除</button>
           <button id="btn-sel-fill" class="tiny" disabled>範囲を塗りつぶし</button>
           <button id="btn-sel-clear" class="tiny" disabled>選択解除</button>
+        </div>
+        <div class="mode-row">
+          <span class="mini">対称コピー:</span>
+          <button id="btn-sel-mirror-x" class="tiny" disabled>X</button>
+          <button id="btn-sel-mirror-y" class="tiny" disabled>Y</button>
+          <button id="btn-sel-mirror-z" class="tiny" disabled>Z</button>
         </div>
         <div class="movepad">
           <span class="mini">移動:</span>
@@ -87,6 +94,21 @@
         </div>
         <button id="btn-bone-assign" class="wide" disabled>選択範囲をこのボーンに割当</button>
         <p class="hint">選択範囲のボクセルをボーンに割り当て、ピボットを中心に回転できます（アニメで対象ボーンを指定）。未割当は root。出力は GeckoLib / TaCZ のみ反映。</p>
+
+        <div id="bone-preview-wrap" class="bone-preview">
+          <div class="mode-row">
+            <span class="mini">回転プレビュー:</span>
+            <select id="bone-prev-target" class="wide-select"></select>
+          </div>
+          <label class="field"><span>X回転 <b id="bone-prev-rx-val">0°</b></span>
+            <input type="range" id="bone-prev-rx" min="-180" max="180" step="1" value="0" /></label>
+          <label class="field"><span>Y回転 <b id="bone-prev-ry-val">0°</b></span>
+            <input type="range" id="bone-prev-ry" min="-180" max="180" step="1" value="0" /></label>
+          <label class="field"><span>Z回転 <b id="bone-prev-rz-val">0°</b></span>
+            <input type="range" id="bone-prev-rz" min="-180" max="180" step="1" value="0" /></label>
+          <button id="btn-bone-prev-reset" class="tiny">回転リセット</button>
+          <p class="hint">プレビュー専用。出力データには影響しません。編集を始めると自動解除されます。</p>
+        </div>
       </section>
 
       <section class="panel">
@@ -261,6 +283,20 @@
       </section>
 
       <section class="panel">
+        <h2>アニメ3Dプレビュー</h2>
+        <label class="field"><span>再生対象</span>
+          <select id="anim-preview-select" class="wide-select"></select></label>
+        <div class="mode-row">
+          <button id="btn-anim-play" class="wide">▶ 再生</button>
+          <button id="btn-anim-stop" class="wide" disabled>■ 停止</button>
+        </div>
+        <label class="toggle"><input type="checkbox" id="anim-preview-loop"> ループ</label>
+        <label class="field"><span>再生位置 <b id="anim-time-val">0.00s</b> / <b id="anim-len-val">0.00s</b></span>
+          <input type="range" id="anim-scrub" min="0" max="1000" value="0"></label>
+        <p class="hint">プリセット／カスタムアニメを3Dで再生確認できます（ボーンのpivotを中心に回転）。再生・ポーズ中は編集できません。</p>
+      </section>
+
+      <section class="panel">
         <h2>一括出力キュー</h2>
         <div class="mode-row">
           <button id="btn-queue-add" class="wide">＋ 現在の内容をキューに追加</button>
@@ -278,7 +314,7 @@
       </section>
     </aside>
 
-    <div id="sidebar-resizer" title="ドラッグで幅を調整"></div>
+    <div id="sidebar-resizer" title="ドラッグで幅を調整（ダブルクリックで既定幅に戻す）"></div>
 
     <main id="canvas-container"></main>
   </div>

@@ -46,7 +46,9 @@
     bindSelection();
     bindReference();
     bindCustomAnims();
+    bindAnimPreview();
     bindBones();
+    bindBonePreview();
     bindProjectIO();
     bindQueue();
     bindSidebarResizer();
@@ -248,7 +250,9 @@
       btn.addEventListener('click', () => {
         document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        editor.setMode(btn.dataset.mode);
+        const wasPreview = editor.isBonePreviewActive && editor.isBonePreviewActive();
+        editor.setMode(btn.dataset.mode); // editor 側でプレビューを自動解除
+        if (wasPreview) resetBonePreviewUI(); // スライダー表示を 0 へ同期
       });
     });
   }
@@ -284,6 +288,13 @@
       handle.classList.add('dragging');
       document.body.classList.add('resizing-sidebar');
       e.preventDefault();
+    });
+    // ダブルクリックで既定幅(270px)に戻す
+    handle.addEventListener('dblclick', () => {
+      sidebar.style.flexBasis = '270px';
+      sidebar.style.width = '270px';
+      localStorage.setItem('vf-sidebar-w', 270);
+      window.dispatchEvent(new Event('resize'));
     });
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -370,6 +381,12 @@
       const n = editor.fillSelection();
       $('export-info').textContent = `${n} ボクセルを塗りつぶしました`;
     });
+    [['btn-sel-mirror-x', 'x'], ['btn-sel-mirror-y', 'y'], ['btn-sel-mirror-z', 'z']].forEach(([id, ax]) => {
+      $(id).addEventListener('click', () => {
+        const n = editor.mirrorCopySelection(ax);
+        $('export-info').textContent = `${ax.toUpperCase()}対称に ${n} ボクセルをコピーしました`;
+      });
+    });
 
     document.querySelectorAll('.movepad [data-mv]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -383,7 +400,7 @@
   function updateSelectionUI(sel) {
     const has = !!sel;
     const hasClip = !!(editor.clipboard && editor.clipboard.length);
-    ['btn-sel-copy', 'btn-sel-cut', 'btn-sel-delete', 'btn-sel-clear', 'btn-sel-fill'].forEach((id) => { $(id).disabled = !has; });
+    ['btn-sel-copy', 'btn-sel-cut', 'btn-sel-delete', 'btn-sel-clear', 'btn-sel-fill', 'btn-sel-mirror-x', 'btn-sel-mirror-y', 'btn-sel-mirror-z'].forEach((id) => { $(id).disabled = !has; });
     $('btn-sel-paste').disabled = !hasClip;
     const ba = $('btn-bone-assign'); if (ba) ba.disabled = !has;
     document.querySelectorAll('.movepad [data-mv]').forEach((b) => { b.disabled = !has; });
@@ -514,12 +531,116 @@
       li.appendChild(span); li.appendChild(del);
       ul.appendChild(li);
     });
+    buildPreviewAnimList();
   }
 
   function applyCustomAnims(list) {
     customAnims.length = 0;
     (list || []).forEach((a) => customAnims.push(a));
     renderCustomAnimList();
+    buildPreviewAnimList();
+  }
+
+  /* ---- アニメ3Dプレビュー ---- */
+  let _scrubDragging = false; // スクラブのユーザードラッグ中（自動更新の上書きを抑制）
+
+  function bindAnimPreview() {
+    buildPreviewAnimList();
+
+    // プリセットのON/OFF・長さ変更で選択肢を最新化
+    ['idle', 'fire', 'reload', 'draw'].forEach((k) => {
+      const cb = $('anim-' + k);
+      if (cb) cb.addEventListener('change', buildPreviewAnimList);
+      const len = $('anim-' + k + '-len');
+      if (len) len.addEventListener('input', buildPreviewAnimList);
+    });
+
+    // 再生対象を変えたら、その場でポーズ表示（先頭フレーム）へ
+    $('anim-preview-select').addEventListener('change', () => {
+      editor.stopAnimation();
+      const key = $('anim-preview-select').value;
+      if (!key) return;
+      const json = buildAnimationJson(getIds().itemId, collectAnimSelections(), customAnims);
+      editor.scrubAnimation(0, json, key, $('anim-preview-loop').checked);
+    });
+
+    $('btn-anim-play').addEventListener('click', () => {
+      const key = $('anim-preview-select').value;
+      if (!key) return;
+      const json = buildAnimationJson(getIds().itemId, collectAnimSelections(), customAnims);
+      editor.playAnimation(json, key, $('anim-preview-loop').checked);
+      updatePlayButtons(true);
+    });
+
+    $('btn-anim-stop').addEventListener('click', () => {
+      editor.stopAnimation();
+      updatePlayButtons(false);
+    });
+
+    $('anim-preview-loop').addEventListener('change', () => {
+      editor.setAnimLoop($('anim-preview-loop').checked);
+    });
+
+    // スクラブ: 0..1000 を 0..length に正規化。ドラッグ中フラグで自動更新を抑制
+    const scrub = $('anim-scrub');
+    scrub.addEventListener('input', () => {
+      _scrubDragging = true;
+      const key = $('anim-preview-select').value;
+      if (!key) return;
+      const json = buildAnimationJson(getIds().itemId, collectAnimSelections(), customAnims);
+      const entry = json && json.animations && json.animations[key];
+      const len = entry ? (Number(entry.animation_length) || 0) : 0;
+      const t = len * (parseFloat(scrub.value) / 1000);
+      editor.scrubAnimation(t, json, key, $('anim-preview-loop').checked);
+      updatePlayButtons(false);
+    });
+    scrub.addEventListener('change', () => { _scrubDragging = false; });
+    scrub.addEventListener('pointerup', () => { _scrubDragging = false; });
+
+    // 毎フレーム通知でラベル/スライダー/ボタンを同期
+    editor.onAnimFrame = (time, length) => {
+      $('anim-time-val').textContent = (time || 0).toFixed(2) + 's';
+      $('anim-len-val').textContent = (length || 0).toFixed(2) + 's';
+      if (!_scrubDragging) {
+        const v = (length > 0) ? Math.round((time / length) * 1000) : 0;
+        $('anim-scrub').value = v;
+      }
+      // 非ループで終端に達したら（playing=falseに落ちる）停止ボタン表示へ
+      if (!editor.anim.playing) updatePlayButtons(false);
+    };
+  }
+
+  function updatePlayButtons(playing) {
+    $('btn-anim-play').disabled = playing || !$('anim-preview-select').value;
+    $('btn-anim-stop').disabled = !playing;
+  }
+
+  /** プリセット＋カスタムから選択肢を再構築。アニメ無しなら無効化 */
+  function buildPreviewAnimList() {
+    const sel = $('anim-preview-select');
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '';
+    const json = buildAnimationJson(getIds().itemId, collectAnimSelections(), customAnims);
+    const keys = json && json.animations ? Object.keys(json.animations) : [];
+    if (!keys.length) {
+      const o = document.createElement('option');
+      o.value = '';
+      o.textContent = '（選択中のアニメなし）';
+      sel.appendChild(o);
+      $('btn-anim-play').disabled = true;
+      $('btn-anim-stop').disabled = !(editor && editor.anim && editor.anim.playing);
+      return;
+    }
+    keys.forEach((k) => {
+      const o = document.createElement('option');
+      o.value = k;
+      o.textContent = k.split('.').slice(2).join('.'); // 末尾名（animation.<id>.<name> の <name>）
+      sel.appendChild(o);
+    });
+    // 以前の選択を維持できれば維持
+    if (keys.indexOf(prev) >= 0) sel.value = prev;
+    $('btn-anim-play').disabled = !!(editor && editor.anim && editor.anim.playing);
   }
 
   /* ---- ボーン（関節）分割 ---- */
@@ -559,7 +680,11 @@
       if (b.name !== 'root') {
         const del = document.createElement('button');
         del.className = 'tiny'; del.textContent = '✕'; del.title = '削除（rootへ戻す）';
-        del.addEventListener('click', () => { editor.removeBone(b.name); refreshBoneUI(); });
+        del.addEventListener('click', () => {
+          editor.clearBonePreview();   // 対象ボーンが消える可能性があるので解除
+          editor.removeBone(b.name);
+          refreshBoneUI();
+        });
         li.appendChild(del);
       }
       ul.appendChild(li);
@@ -567,6 +692,7 @@
     fillBoneSelect($('bone-parent'), true);
     fillBoneSelect($('bone-assign-target'), false);
     fillBoneSelect($('canim-bone'), false);
+    refreshBonePreviewUI();
   }
 
   function fillBoneSelect(sel, withEmpty) {
@@ -584,6 +710,80 @@
       sel.appendChild(o);
     });
     if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  }
+
+  /* ---- ボーン回転プレビュー（pivot周りのX/Y/Z回転を3Dビューに即時反映） ---- */
+  const PREV_AXES = ['rx', 'ry', 'rz'];
+
+  function bindBonePreview() {
+    // 対象ボーン切替: そのボーンの現在のプレビュー回転をスライダーへ反映
+    $('bone-prev-target').addEventListener('change', () => {
+      syncBonePrevSliders();
+    });
+    // 各軸スライダー: 角度表示更新 + エディタへ反映
+    PREV_AXES.forEach((ax) => {
+      $('bone-prev-' + ax).addEventListener('input', () => {
+        applyBonePrevFromSliders();
+      });
+    });
+    // リセット: 当該ボーンの回転を 0 に戻す
+    $('btn-bone-prev-reset').addEventListener('click', () => {
+      PREV_AXES.forEach((ax) => { $('bone-prev-' + ax).value = 0; });
+      applyBonePrevFromSliders();
+    });
+    refreshBonePreviewUI();
+  }
+
+  /** 非rootボーンを bone-prev-target に充填。root のみのときはUIを無効化 */
+  function refreshBonePreviewUI() {
+    const sel = $('bone-prev-target');
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '';
+    const nonRoot = editor.bones.filter((b) => b.name !== 'root');
+    nonRoot.forEach((b) => {
+      const o = document.createElement('option');
+      o.value = b.name; o.textContent = b.name;
+      sel.appendChild(o);
+    });
+    const enabled = nonRoot.length > 0;
+    sel.disabled = !enabled;
+    $('btn-bone-prev-reset').disabled = !enabled;
+    PREV_AXES.forEach((ax) => { $('bone-prev-' + ax).disabled = !enabled; });
+    if (enabled && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+    syncBonePrevSliders();
+  }
+
+  /** 選択中ボーンの現在プレビュー回転（度）をスライダー＆ラベルへ反映 */
+  function syncBonePrevSliders() {
+    const name = $('bone-prev-target').value;
+    const r = (name && editor.getBonePreviewRotation) ? editor.getBonePreviewRotation(name) : [0, 0, 0];
+    PREV_AXES.forEach((ax, i) => {
+      $('bone-prev-' + ax).value = r[i];
+      $('bone-prev-' + ax + '-val').textContent = Math.round(r[i]) + '°';
+    });
+  }
+
+  /** スライダー値（度）を読み取り、ラベル更新＋エディタへプレビュー反映 */
+  function applyBonePrevFromSliders() {
+    const name = $('bone-prev-target').value;
+    const rot = PREV_AXES.map((ax) => {
+      const v = parseFloat($('bone-prev-' + ax).value) || 0;
+      $('bone-prev-' + ax + '-val').textContent = Math.round(v) + '°';
+      return v;
+    });
+    if (name) editor.setBonePreviewRotation(name, rot);
+  }
+
+  /** プレビュー解除＋スライダーを0へ同期（編集モード切替/読込時にUI整合用） */
+  function resetBonePreviewUI() {
+    if (editor && editor.clearBonePreview) editor.clearBonePreview();
+    PREV_AXES.forEach((ax) => {
+      const el = $('bone-prev-' + ax);
+      if (el) el.value = 0;
+      const lbl = $('bone-prev-' + ax + '-val');
+      if (lbl) lbl.textContent = '0°';
+    });
   }
 
   /* ---- プロジェクト 保存/読込/取り込み ---- */
@@ -610,6 +810,7 @@
         if (fmt === 'project') {
           const p = deserializeProject(obj);
           editor.loadData(p.data);
+          editor.setFaceColors(p.faceColors); // 面色復元（loadData 後）
           editor.setMuzzle(p.muzzle, true);
           editor.setBones(p.bones, p.boneMap);
           applyMeta(p.meta);
@@ -752,6 +953,8 @@
   function dataFromSnapshot(s) {
     const d = new VoxelData(s.sx, s.sy, s.sz);
     for (const [x, y, z, color] of s.voxels) d.set(x, y, z, color);
+    // 面色を反映（各エクスポータが面別UVを出せるよう一括出力でも必須）
+    (s.faceColors || []).forEach(([x, y, z, face, color]) => d.setFace(x, y, z, face, color));
     return d;
   }
 

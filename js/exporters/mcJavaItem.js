@@ -15,9 +15,29 @@ function buildItemModel(data, opts) {
   const itemId = opts.itemId;
   const s = opts.scale || 1; // 1ボクセルあたりの model 単位（細かい造形用）
 
-  const boxes = greedyBoxes(data);
-  const colors = [...new Set(boxes.map(b => b.color))];
-  const palette = buildPalette(colors);
+  // 面色を持つ voxel は greedyBoxes から分離し、1 voxel=1 element で個別に面別UV出力する。
+  // 面色なし voxel だけを greedyBoxes でまとめる（面色未使用時は元 data と完全一致＝後方互換）。
+  const facedVoxels = data.entries().filter(([x, y, z]) => data.hasFace(x, y, z));
+  let plainData = data;
+  if (facedVoxels.length) {
+    plainData = new VoxelData(data.sx, data.sy, data.sz);
+    for (const [x, y, z, c] of data.entries()) {
+      if (!data.hasFace(x, y, z)) plainData.set(x, y, z, c);
+    }
+  }
+
+  const boxes = greedyBoxes(plainData);
+  // パレット: boxes の本体色 ＋ faced voxel の本体色＋全面色（既存色を先に並べてindex採番を安定化）
+  const colorSet = [];
+  const seen = new Set();
+  const addColor = (c) => { if (c != null && !seen.has(c)) { seen.add(c); colorSet.push(c); } };
+  boxes.forEach((b) => addColor(b.color));
+  facedVoxels.forEach(([x, y, z, c]) => {
+    addColor(c);
+    const fc = data.facesOf(x, y, z);
+    for (const f of FACES) if (fc[f] !== undefined) addColor(fc[f]);
+  });
+  const palette = buildPalette(colorSet);
 
   const elements = boxes.map(b => {
     const uv = uvFor(b.color, palette);
@@ -31,6 +51,21 @@ function buildItemModel(data, opts) {
       faces,
     };
   });
+
+  // 面色 voxel を 1 element として追加（各面ごとに面色 or 本体色のUVへ向ける）
+  for (const [x, y, z, body] of facedVoxels) {
+    const fc = data.facesOf(x, y, z);
+    const faces = {};
+    for (const f of FACES) {
+      const uv = uvFor(fc[f] !== undefined ? fc[f] : body, palette);
+      faces[f] = { uv: [uv[0], uv[1], uv[2], uv[3]], texture: '#0' };
+    }
+    elements.push({
+      from: [x * s, y * s, z * s],
+      to: [(x + 1) * s, (y + 1) * s, (z + 1) * s],
+      faces,
+    });
+  }
 
   const texRef = namespace + ':item/' + itemId;
   const model = {
@@ -48,5 +83,5 @@ function buildItemModel(data, opts) {
   };
 
   const canvas = renderPaletteCanvas(palette);
-  return { model, canvas, boxCount: boxes.length };
+  return { model, canvas, boxCount: boxes.length + facedVoxels.length };
 }

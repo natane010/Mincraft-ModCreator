@@ -50,14 +50,31 @@ html, body {
   padding: 14px;
 }
 
-/* サイドバー幅のドラッグ調整ハンドル */
+/* サイドバー幅のドラッグ調整ハンドル（掴みやすいグリップ付き） */
 #sidebar-resizer {
-  flex: 0 0 6px;
+  flex: 0 0 10px;
   cursor: col-resize;
-  background: var(--line);
+  background: var(--panel2);
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s;
+}
+/* 中央の縦グリップ（点線で「掴める」ことを示す） */
+#sidebar-resizer::before {
+  content: "";
+  width: 2px;
+  height: 34px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    to bottom, var(--muted) 0 3px, transparent 3px 6px);
+  opacity: .7;
 }
 #sidebar-resizer:hover, #sidebar-resizer.dragging { background: var(--accent); }
+#sidebar-resizer:hover::before, #sidebar-resizer.dragging::before { background: #fff; opacity: 1; }
 body.resizing-sidebar { cursor: col-resize; user-select: none; }
 body.resizing-sidebar #canvas-container canvas { pointer-events: none; }
 
@@ -98,6 +115,9 @@ input[type="color"] { width: 100%; height: 34px; padding: 2px; border: 1px solid
   background: var(--panel2); color: var(--text);
   border: 1px solid var(--line); border-radius: 6px; font-size: 13px;
 }
+
+/* アニメ3Dプレビューのスクラブスライダー */
+#anim-scrub { width: 100%; }
 
 .grid-inputs { display: flex; gap: 6px; margin-bottom: 8px; }
 .grid-inputs label { flex: 1; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); text-align: center; }

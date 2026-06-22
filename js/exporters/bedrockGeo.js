@@ -12,23 +12,29 @@
  */
 const _GEO_FACES = ['north', 'south', 'east', 'west', 'up', 'down'];
 
-/** opts から「ボーン名 -> そのボーンのboxes」を作る */
+/** opts から「ボーン名 -> そのボーンのboxes」を作る。
+ * 面色を持つ voxel は greedyBoxes(色のみ結合)では面別UVが出せないため、
+ * バケツから分離して faced（[x,y,z,body], ...）として個別に1cube出力する。
+ * faced 判定は元 data 基準（バケツには面色をコピーしていないため）。 */
 function _geoBoneGroups(data, opts) {
   const def = (opts.bones && opts.bones.length)
     ? opts.bones : [{ name: 'root', pivot: [0, 0, 0], parent: '' }];
   const names = def.map((b) => b.name);
   const boneOf = opts.boneOf || (() => names[0]);
 
-  const buckets = {};
-  for (const n of names) buckets[n] = new VoxelData(data.sx, data.sy, data.sz);
+  const buckets = {};   // 面色なし voxel のみ（従来通り greedyBoxes 対象）
+  const faced = {};     // 面色あり voxel（個別 cube 対象）
+  for (const n of names) { buckets[n] = new VoxelData(data.sx, data.sy, data.sz); faced[n] = []; }
   for (const [x, y, z, c] of data.entries()) {
     let n = boneOf(x, y, z);
     if (!buckets[n]) n = names[0];
-    buckets[n].set(x, y, z, c);
+    if (data.hasFace(x, y, z)) faced[n].push([x, y, z, c]);
+    else buckets[n].set(x, y, z, c);
   }
   return def.map((b) => ({
     name: b.name, pivot: b.pivot || [0, 0, 0], parent: b.parent || '',
     boxes: greedyBoxes(buckets[b.name]),
+    faced: faced[b.name],
   }));
 }
 
@@ -37,9 +43,17 @@ function buildBedrockGeo(data, opts) {
   const s = opts.unitScale || 1; // 1ボクセルあたりの model 単位（細かい造形用）
   const groups = _geoBoneGroups(data, opts);
 
-  // 全ボーンの色を集めて共有パレットを作る
-  const colors = [...new Set(groups.reduce((a, g) => a.concat(g.boxes.map((b) => b.color)), []))];
-  const palette = buildPalette(colors);
+  // 全ボーンの色を集めて共有パレットを作る（既存色＝boxes本体色を先に並べ、面色を後ろに追加）
+  const colorSet = [];
+  const seen = new Set();
+  const addColor = (c) => { if (c != null && !seen.has(c)) { seen.add(c); colorSet.push(c); } };
+  groups.forEach((g) => g.boxes.forEach((b) => addColor(b.color)));
+  groups.forEach((g) => g.faced.forEach(([x, y, z, c]) => {
+    addColor(c);
+    const fc = data.facesOf(x, y, z);
+    for (const f of _GEO_FACES) if (fc[f] !== undefined) addColor(fc[f]);
+  }));
+  const palette = buildPalette(colorSet);
 
   let boxCount = 0;
   const bones = groups.map((g) => {
@@ -49,6 +63,16 @@ function buildBedrockGeo(data, opts) {
       for (const f of _GEO_FACES) uv[f] = { uv: [px, py], uv_size: [1, 1] };
       return { origin: [b.x * s, b.y * s, b.z * s], size: [b.w * s, b.h * s, b.d * s], uv };
     });
+    // 面色 voxel を 1 cube として追加（各面ごとに面色 or 本体色のテクセルへ）
+    for (const [x, y, z, body] of g.faced) {
+      const fc = data.facesOf(x, y, z);
+      const uv = {};
+      for (const f of _GEO_FACES) {
+        const { px, py } = palette.index.get(fc[f] !== undefined ? fc[f] : body);
+        uv[f] = { uv: [px, py], uv_size: [1, 1] };
+      }
+      cubes.push({ origin: [x * s, y * s, z * s], size: [s, s, s], uv });
+    }
     boxCount += cubes.length;
     const bone = { name: g.name, pivot: [g.pivot[0] * s, g.pivot[1] * s, g.pivot[2] * s], cubes };
     if (g.parent) bone.parent = g.parent;

@@ -7,7 +7,7 @@ class VoxelEditor {
   constructor(container, data) {
     this.container = container;
     this.data = data;
-    this.mode = 'add';            // 'add' | 'remove' | 'paint' | 'locator'
+    this.mode = 'add';            // 'add' | 'remove' | 'paint' | 'face' | 'locator'
     this.color = '#3a8ee6';
     this.meshes = new Map();      // "x,y,z" -> THREE.Mesh
     this.onChange = null;         // ボクセル数変更時のコールバック
@@ -35,6 +35,26 @@ class VoxelEditor {
     this.bones = [{ name: 'root', pivot: [0, 0, 0], parent: '' }]; // ボーン定義
     this.boneMap = new Map();     // "x,y,z" -> boneName（未登録は root 扱い）
     this._bonePivots = null;      // ピボットマーカー group
+
+    // ボーン回転プレビュー（pivot周りのX/Y/Z回転を3Dビューに即時反映。出力データには一切影響しない）
+    // アニメ3DプレビューのボーンGroup階層(_buildAnimGroups/anim.groups)をそのまま再利用する。
+    this.bonePreview = new Map();   // name -> [rx,ry,rz]（度）。プレビュー専用・snapshot/履歴/保存に含めない
+    this._bonePreviewActive = false;
+
+    // アニメ3Dプレビュー再生ステート（snapshot/履歴/プロジェクトには含めない＝後方互換）
+    this.anim = {
+      playing: false,   // 再生中フラグ
+      time: 0,          // 現在の再生位置（秒）
+      length: 0,        // 選択アニメの長さ（秒）
+      loop: false,      // ループ再生
+      json: null,       // buildAnimationJson の出力そのまま
+      name: null,       // 再生対象アニメのフルキー 'animation.<id>.<name>'
+      bones: null,      // 選択アニメの bones マップ（参照用）
+      groups: null,     // Map(boneName -> THREE.Group)
+      rootGroup: null,  // scene 直下に置くルートGroup
+      _last: 0,         // 直近フレーム時刻(ms)
+    };
+    this.onAnimFrame = null;      // (time,length)=>{} 毎フレーム通知
 
     this._initScene();
     this._initLights();
@@ -187,6 +207,7 @@ class VoxelEditor {
 
   /** ヒット位置に現在の編集モードを適用（連続描画・単発クリック共用） */
   _drawAtHit(hit) {
+    if (this.anim.playing || this.anim.rootGroup) return; // 再生/ポーズ中は編集禁止
     if (!hit) return;
     if (this.mode === 'add') {
       let x, y, z;
@@ -211,6 +232,7 @@ class VoxelEditor {
   }
 
   _handleClick(e) {
+    if (this.anim.playing || this.anim.rootGroup) return; // 再生/ポーズ中は編集禁止
     const hit = this._pick(e);
     if (!hit) return;
 
@@ -225,6 +247,8 @@ class VoxelEditor {
     }
 
     if (this.mode === 'select') { this._handleSelectClick(hit); return; }
+
+    if (this.mode === 'face') { this._paintFace(hit); return; }
 
     if (this.mode === 'fill') {
       if (hit.object === this.basePlane) return;
@@ -285,9 +309,71 @@ class VoxelEditor {
     for (const [px, py, pz] of targets) {
       this.data.set(px, py, pz, this.color);
       const mesh = this.meshes.get(this.data.key(px, py, pz));
-      if (mesh) mesh.material.color.set(this.color);
+      if (mesh) this._setMeshBodyColor(mesh, this.color);
     }
     this._changed();
+  }
+
+  /* ---------- 面色ペイント（第1版・面単位の単色・ミラー非対応） ---------- */
+  /** 法線(round)から面名を返す。north=-Z, south=+Z, east=+X, west=-X, up=+Y, down=-Y */
+  _faceNameFromNormal(n) {
+    const x = Math.round(n.x), y = Math.round(n.y), z = Math.round(n.z);
+    const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
+    if (ax >= ay && ax >= az && ax) return x > 0 ? 'east' : 'west';
+    if (ay >= ax && ay >= az && ay) return y > 0 ? 'up' : 'down';
+    if (az) return z > 0 ? 'south' : 'north';
+    return null;
+  }
+
+  /** クリックした面に現在色を塗る（単発クリックのみ・ミラー非対応） */
+  _paintFace(hit) {
+    if (!hit || hit.object === this.basePlane || !hit.face) return;
+    const u = hit.object.userData;
+    const face = this._faceNameFromNormal(hit.face.normal);
+    if (!face) return;
+    if (this.data.getFace(u.x, u.y, u.z, face) === this.color) return; // 同色なら無視
+    this._pushHistory();
+    this.data.setFace(u.x, u.y, u.z, face, this.color);
+    const mesh = this.meshes.get(this.data.key(u.x, u.y, u.z));
+    if (mesh) this._applyFaceColorsToMesh(mesh);
+    this._changed();
+  }
+
+  /** BoxGeometry の group(6面)順 [+X,-X,+Y,-Y,+Z,-Z] に対応する面名 */
+  _materialFor(x, y, z, color) {
+    const faces = this.data.facesOf(x, y, z);
+    if (!Object.keys(faces).length) {
+      // 面色なし＝従来どおり単一マテリアル（後方互換・GPU負荷も従来同等）
+      return new THREE.MeshLambertMaterial({ color });
+    }
+    // group 順: +X(east), -X(west), +Y(up), -Y(down), +Z(south), -Z(north)
+    const order = ['east', 'west', 'up', 'down', 'south', 'north'];
+    return order.map((f) =>
+      new THREE.MeshLambertMaterial({ color: faces[f] !== undefined ? faces[f] : color }));
+  }
+
+  /** 既存マテリアルを破棄して面色対応マテリアルへ差し替え（geometryは共有のまま） */
+  _applyFaceColorsToMesh(mesh) {
+    const u = mesh.userData;
+    const body = this.data.get(u.x, u.y, u.z);
+    this._disposeMeshMaterial(mesh);
+    mesh.material = this._materialFor(u.x, u.y, u.z, body);
+  }
+
+  /** メッシュ本体色を変更（面色ありなら再構築、単一なら従来の color.set） */
+  _setMeshBodyColor(mesh, color) {
+    if (Array.isArray(mesh.material)) {
+      // 面色ありメッシュ: 面色を保ちつつ本体色（面色未指定面）を更新
+      this._applyFaceColorsToMesh(mesh);
+    } else {
+      mesh.material.color.set(color);
+    }
+  }
+
+  /** マテリアルのみ破棄（配列対応）。edges 等の子は残す */
+  _disposeMeshMaterial(mesh) {
+    if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
+    else mesh.material.dispose();
   }
 
   /* ---------- 塗りつぶし（バケツ / 範囲） ---------- */
@@ -312,7 +398,7 @@ class VoxelEditor {
     for (const [px, py, pz] of region) {
       this.data.set(px, py, pz, this.color);
       const m = this.meshes.get(this.data.key(px, py, pz));
-      if (m) m.material.color.set(this.color);
+      if (m) this._setMeshBodyColor(m, this.color);
     }
     this._changed();
     return region.length;
@@ -365,7 +451,8 @@ class VoxelEditor {
 
   _addMesh(x, y, z, color) {
     const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mat = new THREE.MeshLambertMaterial({ color });
+    // 面色があれば6マテリアル配列、無ければ従来の単一マテリアル
+    const mat = this._materialFor(x, y, z, color);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
     mesh.userData = { x, y, z };
@@ -381,7 +468,7 @@ class VoxelEditor {
   _disposeMesh(mesh) {
     this.scene.remove(mesh);
     mesh.geometry.dispose();
-    mesh.material.dispose();
+    this._disposeMeshMaterial(mesh);
   }
 
   /* ---------- ロケーター（銃口/発射点） ---------- */
@@ -423,6 +510,7 @@ class VoxelEditor {
 
   /** ボーン追加。名前重複/空は false */
   addBone(name, pivot, parent) {
+    if (this._bonePreviewActive) this.clearBonePreview();
     name = String(name || '').trim();
     if (!name || this.bones.some((b) => b.name === name)) return false;
     this._pushHistory();
@@ -434,6 +522,7 @@ class VoxelEditor {
   /** ボーン削除（root不可）。所属ボクセル/子ボーンは root へ戻す */
   removeBone(name) {
     if (name === 'root') return false;
+    if (this._bonePreviewActive) this.clearBonePreview();
     const i = this.bones.findIndex((b) => b.name === name);
     if (i < 0) return false;
     this._pushHistory();
@@ -446,6 +535,7 @@ class VoxelEditor {
 
   /** 選択範囲内のボクセルを指定ボーンへ割り当てる。割り当て数を返す */
   assignSelectionToBone(name) {
+    if (this._bonePreviewActive) this.clearBonePreview();
     if (!this.selection || !this.bones.some((b) => b.name === name)) return 0;
     const vox = this._voxelsInSelection();
     if (!vox.length) return 0;
@@ -458,13 +548,30 @@ class VoxelEditor {
   }
 
   resetBones() {
+    if (this._bonePreviewActive) this.clearBonePreview();
     this.bones = [{ name: 'root', pivot: [0, 0, 0], parent: '' }];
     this.boneMap.clear();
     this._renderBonePivots();
   }
 
+  /** 保存データから面色を復元（loadData 後に呼ぶ。該当メッシュを面別マテリアル化） */
+  setFaceColors(entries) {
+    this.data.faceColors.clear();
+    if (entries && entries.length) {
+      for (const [x, y, z, face, color] of entries) this.data.setFace(x, y, z, face, color);
+    }
+    // 面色が付いた voxel のメッシュを再構築
+    const touched = new Set();
+    for (const [x, y, z] of this.data.faceEntries()) touched.add(this.data.key(x, y, z));
+    for (const k of touched) {
+      const mesh = this.meshes.get(k);
+      if (mesh) this._applyFaceColorsToMesh(mesh);
+    }
+  }
+
   /** 保存データからボーン構成を復元 */
   setBones(bones, boneMapEntries) {
+    if (this._bonePreviewActive) this.clearBonePreview();
     this.bones = (bones && bones.length)
       ? bones.map((b) => ({ name: b.name, pivot: (b.pivot || [0, 0, 0]).slice(), parent: b.parent || '' }))
       : [{ name: 'root', pivot: [0, 0, 0], parent: '' }];
@@ -498,6 +605,69 @@ class VoxelEditor {
     this._bonePivots = grp;
   }
 
+  /* ---------- ボーン回転プレビュー（出力データ不変・表示専用） ---------- */
+  /** プレビュー有効中か（main.js のUI同期用） */
+  isBonePreviewActive() { return this._bonePreviewActive; }
+
+  /**
+   * プレビューモード開始。アニメ3Dプレビューと同じボーンGroup階層を構築し、
+   * 各ボクセルMeshを所属ボーンのGroupへ親子付け替えする。
+   * 既にアニメ再生/ポーズ中なら何もしない（排他）。
+   */
+  enterBonePreview() {
+    if (this._bonePreviewActive) return true;
+    if (this.anim.playing || this.anim.rootGroup) return false; // アニメ再生/ポーズと排他
+    this._buildAnimGroups();   // anim.groups / anim.rootGroup を流用
+    this._bonePreviewActive = true;
+    this._applyBonePreview();
+    return true;
+  }
+
+  /**
+   * 非rootボーンの回転（度）をプレビュー反映。未構築なら自動でプレビュー開始。
+   * root は回転対象外（指定されても無視）。
+   */
+  setBonePreviewRotation(name, rot) {
+    if (!name || name === 'root') return false;
+    if (!this.bones.some((b) => b.name === name)) return false;
+    if (!this._bonePreviewActive) {
+      if (!this.enterBonePreview()) return false;
+    }
+    const r = [Number(rot[0]) || 0, Number(rot[1]) || 0, Number(rot[2]) || 0];
+    if (r[0] === 0 && r[1] === 0 && r[2] === 0) this.bonePreview.delete(name);
+    else this.bonePreview.set(name, r);
+    this._applyBonePreview();
+    return true;
+  }
+
+  /** 指定ボーンの現在のプレビュー回転（度）を返す（未設定は[0,0,0]） */
+  getBonePreviewRotation(name) {
+    const r = this.bonePreview.get(name);
+    return r ? r.slice() : [0, 0, 0];
+  }
+
+  /** プレビュー終了。Mesh を scene 直下の元配置へ戻し、回転状態を破棄 */
+  clearBonePreview() {
+    if (!this._bonePreviewActive) { this.bonePreview.clear(); return; }
+    this._bonePreviewActive = false;
+    this.bonePreview.clear();
+    // アニメ用のGroupを流用しているので teardown で元配置へ復帰
+    this._teardownAnimGroups();
+  }
+
+  /** bonePreview の回転（度）を各ボーンGroupに適用（位置=basePos のまま、回転だけ差し替え） */
+  _applyBonePreview() {
+    if (!this.anim.groups) return;
+    const DEG = Math.PI / 180;
+    for (const [name, g] of this.anim.groups) {
+      const base = g.userData.basePos || [0, 0, 0];
+      g.position.set(base[0], base[1], base[2]);
+      const r = (name !== 'root') ? this.bonePreview.get(name) : null;
+      if (r) g.rotation.set(r[0] * DEG, r[1] * DEG, r[2] * DEG);
+      else g.rotation.set(0, 0, 0);
+    }
+  }
+
   /* ---------- 履歴(Undo/Redo) ---------- */
   /** 現在の状態を直列化（履歴・保存共用） */
   snapshot() {
@@ -507,6 +677,7 @@ class VoxelEditor {
       muzzle: this.muzzle ? { ...this.muzzle } : null,
       bones: this.bones.map((b) => ({ name: b.name, pivot: b.pivot.slice(), parent: b.parent })),
       boneMap: [...this.boneMap.entries()],
+      faceColors: this.data.faceEntries(), // [[x,y,z,face,color], ...]（空配列なら従来と差分なし）
     };
   }
 
@@ -521,12 +692,15 @@ class VoxelEditor {
   _applySnapshot(s, frame) {
     const d = new VoxelData(s.sx, s.sy, s.sz);
     for (const [x, y, z, color] of s.voxels) d.set(x, y, z, color);
+    // 面色を復元（voxel存在チェックは setFace 内で実施）。_loadDataRaw が面別マテリアルで描画
+    if (s.faceColors) for (const [x, y, z, face, color] of s.faceColors) d.setFace(x, y, z, face, color);
     this._loadDataRaw(d, frame);
     this.setMuzzle(s.muzzle || null, true);
     if (s.bones) this.setBones(s.bones, s.boneMap);
   }
 
   undo() {
+    this._ensureStopped();
     if (!this.history.undo.length) return;
     this.history.redo.push(this.snapshot());
     this._applySnapshot(this.history.undo.pop(), false);
@@ -535,6 +709,7 @@ class VoxelEditor {
   }
 
   redo() {
+    this._ensureStopped();
     if (!this.history.redo.length) return;
     this.history.undo.push(this.snapshot());
     this._applySnapshot(this.history.redo.pop(), false);
@@ -547,7 +722,11 @@ class VoxelEditor {
   }
 
   /* ---------- 公開API ---------- */
-  setMode(mode) { this.mode = mode; }
+  setMode(mode) {
+    // 編集系/ピッキング系へ切り替えるときは回転プレビューを自動解除（編集とは排他）
+    if (this._bonePreviewActive) this.clearBonePreview();
+    this.mode = mode;
+  }
   setColor(color) { this.color = color; }
   setMirror(axis, on) { this.mirror[axis] = !!on; }
 
@@ -622,6 +801,32 @@ class VoxelEditor {
       }
     }
     return out;
+  }
+
+  /** 選択範囲内ボクセルを指定軸(x/y/z)についてグリッド全体の中心で反転コピー。配置数を返す */
+  mirrorCopySelection(axis) {
+    if (!this.selection) return 0;
+    const vox = this._voxelsInSelection();
+    if (!vox.length) return 0;
+    const { sx, sy, sz } = this.data;
+    // 反転式は _mirrorCoords と同一（グリッド全体の中心基準: s-1-coord）
+    const mir = (x, y, z) => {
+      if (axis === 'x') return [sx - 1 - x, y, z];
+      if (axis === 'y') return [x, sy - 1 - y, z];
+      return [x, y, sz - 1 - z]; // 'z'
+    };
+    // 配置対象を先に算出（グリッド外=範囲外は無視）
+    const targets = [];
+    for (const [x, y, z, c] of vox) {
+      const [mx, my, mz] = mir(x, y, z);
+      if (this.data.inBounds(mx, my, mz)) targets.push([mx, my, mz, c]);
+    }
+    if (!targets.length) return 0;
+    this._pushHistory();
+    let n = 0;
+    for (const [mx, my, mz, c] of targets) { if (this._addRaw(mx, my, mz, c)) n++; }
+    this._changed();
+    return n;
   }
 
   /** 選択範囲をクリップボードへ（min基準の相対座標で保持）。コピー数を返す */
@@ -718,6 +923,7 @@ class VoxelEditor {
   }
 
   clearAll() {
+    this._ensureStopped();
     if (this.data.count() === 0 && !this.muzzle) return;
     this._pushHistory();
     for (const mesh of this.meshes.values()) this._disposeMesh(mesh);
@@ -729,6 +935,7 @@ class VoxelEditor {
 
   /** VoxelData を描画し直す内部処理（履歴を積まない） */
   _loadDataRaw(voxelData, frame) {
+    this._ensureStopped();
     for (const mesh of this.meshes.values()) this._disposeMesh(mesh);
     this.meshes.clear();
     this.data = voxelData;
@@ -747,6 +954,7 @@ class VoxelEditor {
 
   /** グリッドサイズ変更（範囲外ボクセルは破棄して再描画） */
   resize(sx, sy, sz) {
+    this._ensureStopped();
     if (sx === this.data.sx && sy === this.data.sy && sz === this.data.sz) return;
     this._pushHistory();
     const ref = this.reference ? { url: this.reference.url, plane: this.reference.plane, opacity: this.reference.opacity } : null;
@@ -764,6 +972,214 @@ class VoxelEditor {
 
   _changed() { if (this.onChange) this.onChange(this.data.count()); }
 
+  /* ---------- アニメ3Dプレビュー ---------- */
+  /** 静的: トラック {'<秒>':[x,y,z]} を時刻tで線形補間。track無しは null。範囲外はクランプ */
+  static sampleChannel(track, t) {
+    if (!track) return null;
+    const keys = Object.keys(track).map(Number).sort((a, b) => a - b);
+    if (!keys.length) return null;
+    if (t <= keys[0]) return track[VoxelEditor._keyStr(track, keys[0])].slice();
+    const lastK = keys[keys.length - 1];
+    if (t >= lastK) return track[VoxelEditor._keyStr(track, lastK)].slice();
+    // t を挟む2キーを探す
+    for (let i = 0; i < keys.length - 1; i++) {
+      const k0 = keys[i], k1 = keys[i + 1];
+      if (t >= k0 && t <= k1) {
+        const v0 = track[VoxelEditor._keyStr(track, k0)];
+        const v1 = track[VoxelEditor._keyStr(track, k1)];
+        const span = (k1 - k0) || 1;
+        const f = (t - k0) / span;
+        return [
+          v0[0] + (v1[0] - v0[0]) * f,
+          v0[1] + (v1[1] - v0[1]) * f,
+          v0[2] + (v1[2] - v0[2]) * f,
+        ];
+      }
+    }
+    return track[VoxelEditor._keyStr(track, lastK)].slice();
+  }
+
+  /** Number化したキーから元の文字列キーを引き当てる（'0.10' 等の表記揺れ対策） */
+  static _keyStr(track, num) {
+    for (const k of Object.keys(track)) if (Number(k) === num) return k;
+    return String(num);
+  }
+
+  /** ボーン名→pivot 配列を引く（未定義は[0,0,0]） */
+  _pivotOf(name) {
+    const b = this.bones.find((x) => x.name === name);
+    return b ? b.pivot : [0, 0, 0];
+  }
+
+  /** ボーンの親を辿って親pivotを得る（root/親なしは[0,0,0]） */
+  _parentPivotOf(name) {
+    const b = this.bones.find((x) => x.name === name);
+    if (!b || !b.parent) return [0, 0, 0];
+    return this._pivotOf(b.parent);
+  }
+
+  /**
+   * ボーン階層を THREE.Group で構築し、各ボクセルメッシュを所属Groupへ親子付け替え。
+   * 子Groupの position は (自pivot - 親pivot) でローカル化（階層の二重加算回避）。
+   */
+  _buildAnimGroups() {
+    const groups = new Map();
+    // まず全ボーンのGroupを作る
+    for (const b of this.bones) {
+      const g = new THREE.Group();
+      g.rotation.order = 'ZYX'; // Bedrock流 Z→Y→X
+      groups.set(b.name, g);
+    }
+    // 親子付け（root or 親なしは rootGroup 配下）
+    const rootGroup = groups.get('root') || new THREE.Group();
+    for (const b of this.bones) {
+      if (b.name === 'root') continue;
+      const g = groups.get(b.name);
+      const parentName = (b.parent && groups.has(b.parent)) ? b.parent : 'root';
+      const parentG = groups.get(parentName);
+      const pp = this._pivotOf(parentName);
+      // 子は (自pivot - 親pivot) を基準位置に
+      g.userData.basePos = [b.pivot[0] - pp[0], b.pivot[1] - pp[1], b.pivot[2] - pp[2]];
+      g.position.set(g.userData.basePos[0], g.userData.basePos[1], g.userData.basePos[2]);
+      parentG.add(g);
+    }
+    // root のローカル基準は pivot そのもの（通常[0,0,0]）
+    rootGroup.userData.basePos = this._pivotOf('root').slice();
+    rootGroup.position.set(rootGroup.userData.basePos[0], rootGroup.userData.basePos[1], rootGroup.userData.basePos[2]);
+    this.scene.add(rootGroup);
+
+    // 各ボクセルメッシュを所属ボーンのGroupへ。mesh.position はそのボーンpivot相対へ変換
+    for (const [k, mesh] of this.meshes) {
+      const u = mesh.userData;
+      const name = this.getBoneOf(u.x, u.y, u.z);
+      const g = groups.get(name) || rootGroup;
+      const piv = this._pivotOf(g === rootGroup ? 'root' : name);
+      this.scene.remove(mesh);
+      g.add(mesh);
+      mesh.position.set((u.x + 0.5) - piv[0], (u.y + 0.5) - piv[1], (u.z + 0.5) - piv[2]);
+    }
+
+    this.anim.groups = groups;
+    this.anim.rootGroup = rootGroup;
+  }
+
+  /** ボーンGroupを破棄し、全メッシュを scene 直下の元配置へ戻す */
+  _teardownAnimGroups() {
+    if (!this.anim.rootGroup) return;
+    for (const mesh of this.meshes.values()) {
+      const u = mesh.userData;
+      if (mesh.parent) mesh.parent.remove(mesh);
+      this.scene.add(mesh);
+      mesh.position.set(u.x + 0.5, u.y + 0.5, u.z + 0.5);
+    }
+    // group群を破棄
+    this.scene.remove(this.anim.rootGroup);
+    if (this.anim.groups) {
+      for (const g of this.anim.groups.values()) {
+        // ジオメトリは mesh 由来なので破棄しない（移し替えただけ）
+        if (g.parent) g.parent.remove(g);
+      }
+    }
+    this.anim.groups = null;
+    this.anim.rootGroup = null;
+  }
+
+  /** 選択アニメの bones を走査し、各 Group の position/rotation を時刻tで適用 */
+  _applyAnimAt(time) {
+    if (!this.anim.groups || !this.anim.bones) return;
+    const DEG = Math.PI / 180;
+    for (const [name, g] of this.anim.groups) {
+      const base = g.userData.basePos || [0, 0, 0];
+      const track = this.anim.bones[name];
+      let dpos = null, drot = null;
+      if (track) {
+        dpos = VoxelEditor.sampleChannel(track.position, time);
+        drot = VoxelEditor.sampleChannel(track.rotation, time);
+      }
+      // 位置: ベース + 補間移動（モデル単位=ボクセル単位そのまま）
+      const px = base[0] + (dpos ? dpos[0] : 0);
+      const py = base[1] + (dpos ? dpos[1] : 0);
+      const pz = base[2] + (dpos ? dpos[2] : 0);
+      g.position.set(px, py, pz);
+      // 回転: 度→ラジアン（ZYX順は order で適用）
+      if (drot) g.rotation.set(drot[0] * DEG, drot[1] * DEG, drot[2] * DEG);
+      else g.rotation.set(0, 0, 0);
+    }
+  }
+
+  /** 指定アニメ(フルキー)を内部ロードしてGroupを構築（再生/スクラブ共通の準備） */
+  _loadAnim(json, fullKey, loop) {
+    this._ensureStopped();
+    if (!json || !json.animations || !json.animations[fullKey]) return false;
+    const entry = json.animations[fullKey];
+    this.anim.json = json;
+    this.anim.name = fullKey;
+    this.anim.bones = entry.bones || {};
+    this.anim.length = Number(entry.animation_length) || 0;
+    this.anim.loop = !!loop;
+    this.anim.time = 0;
+    this._buildAnimGroups();
+    this._applyAnimAt(0);
+    return true;
+  }
+
+  /** アニメ再生開始 */
+  playAnimation(json, fullKey, loop) {
+    if (!this._loadAnim(json, fullKey, loop)) return false;
+    this.anim.playing = true;
+    this.anim._last = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    if (this.onAnimFrame) this.onAnimFrame(this.anim.time, this.anim.length);
+    return true;
+  }
+
+  /** 再生停止（メッシュを元配置へ復帰） */
+  stopAnimation() {
+    if (!this.anim.playing && !this.anim.rootGroup) return;
+    this.anim.playing = false;
+    this._teardownAnimGroups();
+    this.anim.bones = null;
+    this.anim.name = null;
+    this.anim.time = 0;
+    if (this.onAnimFrame) this.onAnimFrame(0, this.anim.length);
+  }
+
+  /** 内部安全停止：再生もポーズ表示もボーン回転プレビューも解除（破壊的操作前に呼ぶ） */
+  _ensureStopped() {
+    if (!this.anim.playing && !this.anim.rootGroup) return;
+    this.anim.playing = false;
+    // ボーン回転プレビューは anim.groups を流用しているため、ここで一括解除する
+    this._bonePreviewActive = false;
+    this.bonePreview.clear();
+    this._teardownAnimGroups();
+    this.anim.bones = null;
+    this.anim.name = null;
+    this.anim.time = 0;
+  }
+
+  setAnimLoop(on) { this.anim.loop = !!on; }
+
+  /**
+   * スクラブ：再生中でなくても、選択中アニメをポーズ表示する。
+   * json/fullKey 未指定時は既にロード済みなら time だけ更新。
+   */
+  scrubAnimation(time, json, fullKey, loop) {
+    if (json && fullKey) {
+      // 別アニメ or 未ロードなら読み込み直す
+      if (!this.anim.rootGroup || this.anim.name !== fullKey) {
+        if (!this._loadAnim(json, fullKey, loop)) return;
+      } else if (loop != null) {
+        this.anim.loop = !!loop;
+      }
+    }
+    if (!this.anim.rootGroup) return;
+    const len = this.anim.length || 0;
+    const t = len > 0 ? Math.max(0, Math.min(len, time)) : 0;
+    this.anim.playing = false; // スクラブ中はポーズ
+    this.anim.time = t;
+    this._applyAnimAt(t);
+    if (this.onAnimFrame) this.onAnimFrame(t, len);
+  }
+
   /* ---------- ループ ---------- */
   _onResize() {
     const w = this.container.clientWidth;
@@ -776,6 +1192,30 @@ class VoxelEditor {
   _animate() {
     requestAnimationFrame(this._animate);
     this.controls.update();
+    this._tickAnim();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** 再生中なら経過時間を進め、補間適用＆通知。終端は loop=剰余 / 非loop=停止 */
+  _tickAnim() {
+    if (!this.anim.playing) return;
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const dt = Math.max(0, (now - this.anim._last) / 1000);
+    this.anim._last = now;
+    const len = this.anim.length || 0;
+    let t = this.anim.time + dt;
+    if (len <= 0) {
+      t = 0;
+    } else if (t >= len) {
+      if (this.anim.loop) {
+        t = t % len;
+      } else {
+        t = len;
+        this.anim.playing = false; // 終端で停止状態へ（Groupは表示維持）
+      }
+    }
+    this.anim.time = t;
+    this._applyAnimAt(t);
+    if (this.onAnimFrame) this.onAnimFrame(t, len);
   }
 }
