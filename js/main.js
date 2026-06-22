@@ -338,6 +338,8 @@
 
     $('drag-draw').addEventListener('change', (e) => editor.setDragDraw(e.target.checked));
     $('face-pixel').addEventListener('change', (e) => editor.setFacePixelMode(e.target.checked));
+    const faceResSel = $('face-res');
+    if (faceResSel) faceResSel.addEventListener('change', (e) => editor.setFaceRes(parseInt(e.target.value, 10)));
 
     // キーボードショートカット（テキスト入力中は無効）
     document.addEventListener('keydown', (e) => {
@@ -931,6 +933,11 @@
         if (fmt === 'project') {
           const p = deserializeProject(obj);
           editor.loadData(p.data);
+          // 面ピクセル解像度を復元（facePixels 流し込みより前。p.data は既に faceRes 設定済み）。
+          if (p.faceRes) {
+            const frSel = $('face-res');
+            if (frSel) frSel.value = String(p.faceRes);
+          }
           editor.setFaceColors(p.faceColors); // 面色復元（loadData 後）
           editor.setFacePixels(p.facePixels); // 面ピクセル復元（loadData 後）
           editor.setMuzzle(p.muzzle, true);

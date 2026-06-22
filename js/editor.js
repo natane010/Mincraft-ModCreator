@@ -235,7 +235,7 @@ class VoxelEditor {
       const face = this._faceNameFromNormal(hit.face.normal);
       if (!face) return;
       if (this.facePixelMode) {
-        const idx = this._pixelIndexFromHit(hit);
+        const idx = this._pixelIndexFromHit(hit, face);
         const key = u.x + ',' + u.y + ',' + u.z + ',' + face + '#' + idx;
         if (key === this._lastDrawKey) return;
         this._lastDrawKey = key;
@@ -343,48 +343,138 @@ class VoxelEditor {
     return null;
   }
 
-  /** 面全体に現在色を塗る（ストローク共用・_maybePush で履歴1回） */
+  /**
+   * ミラー軸ごとの「面名の対応」と「面内 px/py 反転」の規則。
+   * 正準は FaceOrient（外から見て px=右, py=下, idx=py*res+px）。
+   * Three r137 BoxGeometry のUV由来で導出（node で全面 swap無し＝col or row 単純反転を検証済み）:
+   *  - x: 全面 px反転, 面名 east↔west
+   *  - y: side面(N/S/E/W) py反転 / up・down は反転なし, 面名 up↔down
+   *  - z: east/west/south/north は px反転 / up・down は py反転, 面名 south↔north
+   */
+  _mirrorRule(axis, face) {
+    const FACE_MIRROR = VoxelEditor.FACE_MIRROR[axis];
+    const r = FACE_MIRROR[face];
+    return r; // { face, flipX, flipY }
+  }
+
+  /**
+   * 有効なミラー軸の全組合せで、面塗り/面ピクセルの対象
+   * [voxel x,y,z, 反転後face, 反転後idx(idx省略時は null)] のリストを返す（重複除去）。
+   */
+  _mirrorFaceTargets(x, y, z, face, idx) {
+    const res = this.data.faceRes || 8;
+    const axes = [];
+    if (this.mirror.x) axes.push('x');
+    if (this.mirror.y) axes.push('y');
+    if (this.mirror.z) axes.push('z');
+    const hasIdx = (typeof idx === 'number');
+    // 初期状態（反転なし）
+    let states = [{ x, y, z, face, idx: hasIdx ? idx : null }];
+    const { sx, sy, sz } = this.data;
+    for (const ax of axes) {
+      const next = [];
+      for (const st of states) {
+        next.push(st); // 元（その軸では反転しない）
+        const rule = this._mirrorRule(ax, st.face);
+        if (!rule) continue;
+        // voxel 座標を該当軸で反転（_mirrorCoords と同式 s-1-coord）
+        let nx = st.x, ny = st.y, nz = st.z;
+        if (ax === 'x') nx = sx - 1 - st.x;
+        else if (ax === 'y') ny = sy - 1 - st.y;
+        else nz = sz - 1 - st.z;
+        // idx を該当軸の面内反転規則で写す
+        let nidx = st.idx;
+        if (st.idx != null) {
+          let px = st.idx % res, py = (st.idx - px) / res;
+          if (rule.flipX) px = res - 1 - px;
+          if (rule.flipY) py = res - 1 - py;
+          nidx = py * res + px;
+        }
+        next.push({ x: nx, y: ny, z: nz, face: rule.face, idx: nidx });
+      }
+      states = next;
+    }
+    // 重複除去（同一 voxel+face+idx は1回だけ）
+    const seen = new Map();
+    for (const st of states) {
+      const k = st.x + ',' + st.y + ',' + st.z + ',' + st.face + '#' + (st.idx == null ? '' : st.idx);
+      if (!seen.has(k)) seen.set(k, st);
+    }
+    return [...seen.values()];
+  }
+
+  /** 面全体に現在色を塗る（ミラー対応・ストローク共用・_maybePush で履歴1回） */
   _paintFaceAt(x, y, z, face) {
-    if (this.data.getFace(x, y, z, face) === this.color) return; // 同色なら無視
+    const targets = this._mirrorFaceTargets(x, y, z, face)
+      .filter((t) => this.data.has(t.x, t.y, t.z) && this.data.getFace(t.x, t.y, t.z, t.face) !== this.color);
+    if (!targets.length) return; // 対象なし/全て同色
     this._maybePush();
-    this.data.setFace(x, y, z, face, this.color);
-    const mesh = this.meshes.get(this.data.key(x, y, z));
-    if (mesh) this._applyFaceColorsToMesh(mesh);
+    const touched = new Set();
+    for (const t of targets) {
+      this.data.setFace(t.x, t.y, t.z, t.face, this.color);
+      touched.add(this.data.key(t.x, t.y, t.z));
+    }
+    for (const k of touched) { const mesh = this.meshes.get(k); if (mesh) this._applyFaceColorsToMesh(mesh); }
     this._changed();
   }
 
-  /** 面の1ピクセルに現在色を塗る（res×res 細分。ストローク共用） */
+  /** 面の1ピクセルに現在色を塗る（res×res 細分。ミラー対応・ストローク共用） */
   _paintFacePixelAt(x, y, z, face, idx) {
-    const arr = this.data.getFacePixelArray(x, y, z, face);
-    if (arr && arr[idx] === this.color) return;
+    const targets = this._mirrorFaceTargets(x, y, z, face, idx)
+      .filter((t) => {
+        if (!this.data.has(t.x, t.y, t.z)) return false;
+        const arr = this.data.getFacePixelArray(t.x, t.y, t.z, t.face);
+        return !(arr && arr[t.idx] === this.color);
+      });
+    if (!targets.length) return;
     this._maybePush();
-    this.data.setFacePixel(x, y, z, face, idx, this.color);
-    const mesh = this.meshes.get(this.data.key(x, y, z));
-    if (mesh) this._applyFaceColorsToMesh(mesh);
+    const touched = new Set();
+    for (const t of targets) {
+      this.data.setFacePixel(t.x, t.y, t.z, t.face, t.idx, this.color);
+      touched.add(this.data.key(t.x, t.y, t.z));
+    }
+    for (const k of touched) { const mesh = this.meshes.get(k); if (mesh) this._applyFaceColorsToMesh(mesh); }
     this._changed();
   }
 
-  /** raycast の uv から、その面の res×res 格子のピクセル index を返す */
-  _pixelIndexFromHit(hit) {
+  /**
+   * raycast の uv から、その面の res×res 格子の「正準」ピクセル index を返す。
+   * 面ごとの向き補正は FaceOrient.hitUvToCanon に一元化（唯一の真実）。
+   */
+  _pixelIndexFromHit(hit, face) {
     const res = this.data.faceRes || 8;
     const u = hit.uv ? hit.uv.x : 0;
     const v = hit.uv ? hit.uv.y : 0;
+    if (face && typeof FaceOrient !== 'undefined') {
+      return FaceOrient.hitUvToCanon(face, u, v, res);
+    }
+    // フォールバック（FaceOrient 未ロード時）: 従来式
     let col = Math.floor(u * res), row = Math.floor((1 - v) * res);
     col = Math.max(0, Math.min(res - 1, col));
     row = Math.max(0, Math.min(res - 1, row));
     return row * res + col;
   }
 
-  /** ピクセル配列 arr(res*res) から CanvasTexture を作る（null は fallback 色） */
-  _faceTexture(arr, fallback) {
+  /**
+   * ピクセル配列 arr(res*res, 正準順) から CanvasTexture を作る（null は fallback 色）。
+   * arr は「正準(px,py)=arr[py*res+px]」。エディタ表示で正準が在ゲームと同じ向きに見え、
+   * かつ _pixelIndexFromHit と自己整合するよう、面ごとに canvas 描画先を補正する
+   * （FaceOrient.canonToEditorCell が hitUvToCanon の逆写像）。
+   * face 省略時は従来どおり（col=c,row=r）= 後方互換。
+   */
+  _faceTexture(arr, fallback, face) {
     const res = this.data.faceRes || 8;
     const canvas = document.createElement('canvas');
     canvas.width = res; canvas.height = res;
     const ctx = canvas.getContext('2d');
-    for (let r = 0; r < res; r++) {
-      for (let c = 0; c < res; c++) {
-        ctx.fillStyle = arr[r * res + c] || fallback || '#000000';
-        ctx.fillRect(c, r, 1, 1);
+    const useOrient = (face && typeof FaceOrient !== 'undefined');
+    for (let py = 0; py < res; py++) {
+      for (let px = 0; px < res; px++) {
+        const color = arr[py * res + px] || fallback || '#000000';
+        let col = px, row = py;
+        if (useOrient) { const cell = FaceOrient.canonToEditorCell(face, px, py, res); col = cell[0]; row = cell[1]; }
+        ctx.fillStyle = color;
+        ctx.fillRect(col, row, 1, 1);
       }
     }
     const tex = new THREE.CanvasTexture(canvas);
@@ -406,7 +496,7 @@ class VoxelEditor {
     const order = ['east', 'west', 'up', 'down', 'south', 'north'];
     return order.map((f) => {
       const arr = this.data.getFacePixelArray(x, y, z, f);
-      if (arr) return new THREE.MeshLambertMaterial({ map: this._faceTexture(arr, color) });
+      if (arr) return new THREE.MeshLambertMaterial({ map: this._faceTexture(arr, color, f) });
       return new THREE.MeshLambertMaterial({ color: faces[f] !== undefined ? faces[f] : color });
     });
   }
@@ -632,6 +722,26 @@ class VoxelEditor {
   /** 面ピクセルのON/OFF（面塗りモード内のサブ切替） */
   setFacePixelMode(on) { this.facePixelMode = !!on; }
 
+  /**
+   * 面ピクセル解像度を変更（4/8/16）。既存の面ピクセルを nearest 再標本化して保持。
+   * 履歴に積み、面ピクセル付き voxel のメッシュを再構築する。同値/不正値は no-op。
+   */
+  setFaceRes(newRes) {
+    newRes = parseInt(newRes, 10);
+    if ([4, 8, 16].indexOf(newRes) < 0) return false;
+    if (newRes === this.data.faceRes) return true;
+    this._pushHistory();
+    this.data.setFaceRes(newRes);
+    const touched = new Set();
+    for (const [x, y, z] of this.data.facePixelEntries()) touched.add(this.data.key(x, y, z));
+    for (const k of touched) { const mesh = this.meshes.get(k); if (mesh) this._applyFaceColorsToMesh(mesh); }
+    this._changed();
+    return true;
+  }
+
+  /** 現在の面ピクセル解像度 */
+  getFaceRes() { return this.data.faceRes; }
+
   /** 保存データから面ピクセルを復元（loadData 後に呼ぶ） */
   setFacePixels(entries) {
     this.data.facePixels.clear();
@@ -753,6 +863,7 @@ class VoxelEditor {
   snapshot() {
     return {
       sx: this.data.sx, sy: this.data.sy, sz: this.data.sz,
+      faceRes: this.data.faceRes, // 面ピクセル解像度（復元時に配列長を合わせるため先頭で適用）
       voxels: this.data.entries(),
       muzzle: this.muzzle ? { ...this.muzzle } : null,
       bones: this.bones.map((b) => ({ name: b.name, pivot: b.pivot.slice(), parent: b.parent })),
@@ -772,6 +883,8 @@ class VoxelEditor {
   /** スナップショットを復元（履歴は積まない）。frame=falseでカメラ維持 */
   _applySnapshot(s, frame) {
     const d = new VoxelData(s.sx, s.sy, s.sz);
+    // 面ピクセル流し込みの前に解像度を確定（setFacePixel が faceRes で配列長を決めるため）
+    if (s.faceRes) d.setFaceRes(s.faceRes);
     for (const [x, y, z, color] of s.voxels) d.set(x, y, z, color);
     // 面色を復元（voxel存在チェックは setFace 内で実施）。_loadDataRaw が面別マテリアルで描画
     if (s.faceColors) for (const [x, y, z, face, color] of s.faceColors) d.setFace(x, y, z, face, color);
@@ -1303,3 +1416,41 @@ class VoxelEditor {
     if (this.onAnimFrame) this.onAnimFrame(t, len);
   }
 }
+
+/**
+ * 面塗り/面ピクセルのミラー変換表（軸 → 面名 → {face:反転後面名, flipX, flipY}）。
+ * 正準は FaceOrient（外から見て px=右, py=下）。Three r137 BoxGeometry のUV由来で導出し、
+ * node で全面 swap無し（col or row の単純反転）になることを検証済み。
+ *  x: 全面 px反転, 面名 east↔west
+ *  y: side面(N/S/E/W) py反転 / up・down は反転なし, 面名 up↔down
+ *  z: east/west/south/north は px反転 / up・down は py反転, 面名 south↔north
+ */
+VoxelEditor.FACE_MIRROR = {
+  x: {
+    east:  { face: 'west',  flipX: true,  flipY: false },
+    west:  { face: 'east',  flipX: true,  flipY: false },
+    up:    { face: 'up',    flipX: true,  flipY: false },
+    down:  { face: 'down',  flipX: true,  flipY: false },
+    south: { face: 'south', flipX: true,  flipY: false },
+    north: { face: 'north', flipX: true,  flipY: false },
+  },
+  y: {
+    east:  { face: 'east',  flipX: false, flipY: true },
+    west:  { face: 'west',  flipX: false, flipY: true },
+    up:    { face: 'down',  flipX: false, flipY: false },
+    down:  { face: 'up',    flipX: false, flipY: false },
+    south: { face: 'south', flipX: false, flipY: true },
+    north: { face: 'north', flipX: false, flipY: true },
+  },
+  z: {
+    east:  { face: 'east',  flipX: true,  flipY: false },
+    west:  { face: 'west',  flipX: true,  flipY: false },
+    up:    { face: 'up',    flipX: false, flipY: true },
+    down:  { face: 'down',  flipX: false, flipY: true },
+    south: { face: 'north', flipX: true,  flipY: false },
+    north: { face: 'south', flipX: true,  flipY: false },
+  },
+};
+
+// Node テスト用エクスポート（ブラウザでは無害）
+if (typeof module !== 'undefined' && module.exports) module.exports = VoxelEditor;

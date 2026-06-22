@@ -53,6 +53,11 @@ function buildBedrockGeo(data, opts) {
     canvas = atlas.canvas;
     colorUv = (color) => ({ uv: atlas.colorTexel(color), uv_size: [r, r] });
     facedUv = (x, y, z, face, body) => {
+      if (atlas.hasPix(x, y, z, face) && typeof FaceOrient !== 'undefined') {
+        // 面ピクセルを指す面のみ：正準の向きを在ゲームへ合わせて uv/uv_size（符号反転）を付与
+        return FaceOrient.bedrockFaceUv(atlas.faceTexel(x, y, z, face), r, face);
+      }
+      // 色タイル面は無地＝向き不問。従来どおり（後方互換）
       const t = atlas.hasPix(x, y, z, face) ? atlas.faceTexel(x, y, z, face)
         : atlas.colorTexel(_facedColor(data, x, y, z, face, body));
       return { uv: t, uv_size: [r, r] };

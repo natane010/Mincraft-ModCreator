@@ -79,10 +79,12 @@ function buildFaceAtlas(data) {
       if (t.type === 'color') {
         ctx.fillStyle = t.color; ctx.fillRect(ox, oy, res, res);
       } else {
-        for (let r = 0; r < res; r++) {
-          for (let c = 0; c < res; c++) {
-            ctx.fillStyle = t.arr[r * res + c] || t.body || '#000000';
-            ctx.fillRect(ox + c, oy + r, 1, 1);
+        // 規約: タイル画素(tx,ty) == 正準(px,py)。arr[py*res+px] を (ox+px, oy+py) に描く。
+        // （旧式 r*res+c→ox+c,oy+r と数式同一＝canvas バイト不変。faceOrient.js の唯一の真実と一致）
+        for (let py = 0; py < res; py++) {
+          for (let px = 0; px < res; px++) {
+            ctx.fillStyle = t.arr[py * res + px] || t.body || '#000000';
+            ctx.fillRect(ox + px, oy + py, 1, 1);
           }
         }
       }

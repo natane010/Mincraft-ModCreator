@@ -44,8 +44,15 @@
           <button id="btn-clear-muzzle" class="tiny" title="銃口点を消去">銃口点クリア</button>
         </div>
         <label class="toggle"><input type="checkbox" id="drag-draw"> 連続描画（左ドラッグで描く／右ドラッグで回転。面塗にも有効）</label>
-        <label class="toggle"><input type="checkbox" id="face-pixel"> 面塗をピクセル単位にする（8×8・ドット絵）</label>
-        <p class="hint">「塗潰」はクリックした連結同色領域を現在色に一括変更。「面塗」=面を現在色に（ピクセル単位ONで面を8×8に分割して塗れる）。連続描画ONで面/ピクセルをドラッグ塗り可。「銃口点」で発射原点(muzzle)、「選択」で2点クリックして範囲指定。</p>
+        <label class="toggle"><input type="checkbox" id="face-pixel"> 面塗をピクセル単位にする（ドット絵）</label>
+        <label class="toggle">面ピクセル解像度:
+          <select id="face-res">
+            <option value="4">4×4</option>
+            <option value="8" selected>8×8</option>
+            <option value="16">16×16</option>
+          </select>
+        </label>
+        <p class="hint">「塗潰」はクリックした連結同色領域を現在色に一括変更。「面塗」=面を現在色に（ピクセル単位ONで面を解像度ぶんに分割して塗れる）。解像度は4/8/16から選択（変更時は既存ドット絵を保持）。ミラー対称は面塗/面ピクセルにも有効。連続描画ONで面/ピクセルをドラッグ塗り可。「銃口点」で発射原点(muzzle)、「選択」で2点クリックして範囲指定。</p>
       </section>
 
       <section class="panel">
@@ -330,6 +337,7 @@
   <script src="js/voxelData.js"></script>
   <script src="js/templates.js"></script>
   <script src="js/greedyMesh.js"></script>
+  <script src="js/faceOrient.js"></script>
   <script src="js/texture.js"></script>
   <script src="js/exporters/mcJavaItem.js"></script>
   <script src="js/exporters/bedrockGeo.js"></script>

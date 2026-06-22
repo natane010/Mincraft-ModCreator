@@ -136,6 +136,30 @@ class VoxelData {
 
   count() { return this.map.size; }
 
+  /**
+   * 面ピクセル解像度を変更（4/8/16）。既存 facePixels を nearest 再標本化して保持。
+   * 新 arr[nr*newRes+nc] = old[ floor(nr*old/new)*old + floor(nc*old/new) ]（正準 idx=py*res+px）。
+   * 同値は no-op で true。範囲外解像度は false。faceColors/map/bones 等は不変。
+   */
+  setFaceRes(newRes) {
+    if ([4, 8, 16].indexOf(newRes) < 0) return false;
+    const oldRes = this.faceRes;
+    if (newRes === oldRes) return true;
+    for (const [k, oldArr] of this.facePixels) {
+      const nArr = new Array(newRes * newRes).fill(null);
+      for (let nr = 0; nr < newRes; nr++) {
+        const sr = Math.floor(nr * oldRes / newRes);
+        for (let nc = 0; nc < newRes; nc++) {
+          const sc = Math.floor(nc * oldRes / newRes);
+          nArr[nr * newRes + nc] = oldArr[sr * oldRes + sc];
+        }
+      }
+      this.facePixels.set(k, nArr);
+    }
+    this.faceRes = newRes;
+    return true;
+  }
+
   /** グリッドサイズ変更。範囲外に出たボクセルは破棄。 */
   resize(sx, sy, sz) {
     this.sx = sx; this.sy = sy; this.sz = sz;

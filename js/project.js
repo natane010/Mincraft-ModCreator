@@ -23,6 +23,8 @@ function serializeProject(state) {
     generatedBy: "Natane's Voxel & Data Forge",
     ids: state.ids || {},
     grid: { sx: s.sx, sy: s.sy, sz: s.sz },
+    // 面ピクセル解像度。既定8（標準）なら null 化＝従来JSONと差分ゼロ（後方互換）
+    faceRes: (s.faceRes && s.faceRes !== 8) ? s.faceRes : null,
     // voxels は [[x,y,z,"#rrggbb"], ...]
     voxels: s.voxels,
     muzzle: s.muzzle || null,
@@ -45,6 +47,9 @@ function deserializeProject(obj) {
   const g = obj.grid || {};
   const sx = clampGrid(g.sx), sy = clampGrid(g.sy), sz = clampGrid(g.sz);
   const data = new VoxelData(sx, sy, sz);
+  // 面ピクセル解像度（未定義/不正は既定8）。facePixels 流し込みより前に確定。
+  const faceRes = ([4, 8, 16].indexOf(obj.faceRes) >= 0) ? obj.faceRes : 8;
+  data.setFaceRes(faceRes);
   const voxels = Array.isArray(obj.voxels) ? obj.voxels : [];
   let dropped = 0;
   for (const v of voxels) {
@@ -55,6 +60,7 @@ function deserializeProject(obj) {
   return {
     data,
     grid: { sx, sy, sz },
+    faceRes,
     muzzle: obj.muzzle && typeof obj.muzzle === 'object'
       ? { x: +obj.muzzle.x || 0, y: +obj.muzzle.y || 0, z: +obj.muzzle.z || 0 } : null,
     meta: obj.meta || null,

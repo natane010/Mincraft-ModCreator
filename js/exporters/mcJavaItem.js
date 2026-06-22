@@ -118,10 +118,18 @@ function _buildItemModelAtlas(data, opts, atlas, s) {
     const fc = data.facesOf(x, y, z);
     const faces = {};
     for (const f of FACES) {
-      let texel;
-      if (atlas.hasPix(x, y, z, f)) texel = atlas.faceTexel(x, y, z, f);
-      else texel = atlas.colorTexel(fc[f] !== undefined ? fc[f] : body);
-      faces[f] = { uv: atlasUv(texel, res, dim), texture: '#0' };
+      if (atlas.hasPix(x, y, z, f) && typeof FaceOrient !== 'undefined') {
+        // 面ピクセルを指す面のみ：正準の向きを在ゲームへ合わせて uv(+rotation) を付与
+        const jf = FaceOrient.javaFaceUv(atlas.faceTexel(x, y, z, f), res, dim, f);
+        faces[f] = { uv: jf.uv, texture: '#0' };
+        if (jf.rotation) faces[f].rotation = jf.rotation;
+      } else {
+        // 色タイル（本体色/面色）を指す面は無地＝向き不問。従来どおり（後方互換）
+        const texel = atlas.hasPix(x, y, z, f)
+          ? atlas.faceTexel(x, y, z, f)
+          : atlas.colorTexel(fc[f] !== undefined ? fc[f] : body);
+        faces[f] = { uv: atlasUv(texel, res, dim), texture: '#0' };
+      }
     }
     elements.push({
       from: [x * s, y * s, z * s],
