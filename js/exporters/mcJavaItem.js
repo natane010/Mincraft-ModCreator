@@ -13,6 +13,7 @@ const FACES = ['north', 'south', 'east', 'west', 'up', 'down'];
 function buildItemModel(data, opts) {
   const namespace = opts.namespace;
   const itemId = opts.itemId;
+  const s = opts.scale || 1; // 1ボクセルあたりの model 単位（細かい造形用）
 
   const boxes = greedyBoxes(data);
   const colors = [...new Set(boxes.map(b => b.color))];
@@ -25,8 +26,8 @@ function buildItemModel(data, opts) {
       faces[f] = { uv: [uv[0], uv[1], uv[2], uv[3]], texture: '#0' };
     }
     return {
-      from: [b.x, b.y, b.z],
-      to: [b.x + b.w, b.y + b.h, b.z + b.d],
+      from: [b.x * s, b.y * s, b.z * s],
+      to: [(b.x + b.w) * s, (b.y + b.h) * s, (b.z + b.d) * s],
       faces,
     };
   });

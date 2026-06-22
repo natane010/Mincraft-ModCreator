@@ -66,7 +66,7 @@ function deserializeProject(obj) {
 function clampGrid(v) {
   let n = parseInt(v, 10);
   if (isNaN(n)) n = 16;
-  return Math.max(1, Math.min(64, n));
+  return Math.max(1, Math.min(128, n));
 }
 
 function normalizeColor(c) {

@@ -116,7 +116,13 @@
           <button id="btn-load-project" class="wide">📂 読み込み / 取り込み</button>
           <input type="file" id="file-project" accept=".json,.vdf.json,application/json,image/*" multiple hidden />
         </div>
-        <p class="hint">.vdf.json で続きから再開。Java model.json / Bedrock .geo.json も形状取り込み可。<b>モデルJSONとテクスチャPNGを同時選択すると色を復元</b>します。</p>
+        <label class="field"><span>取り込み細分化（細かいモデル用）</span>
+          <select id="import-subdiv">
+            <option value="1">×1（標準・1単位=1ボクセル）</option>
+            <option value="2">×2（0.5単位まで再現）</option>
+            <option value="4">×4（0.25単位まで再現）</option>
+          </select></label>
+        <p class="hint">.vdf.json で続きから再開。Java model.json / Bedrock .geo.json も形状取り込み可。<b>モデルJSONとテクスチャPNGを同時選択すると色を復元</b>。細分化を上げると小数座標の細部を保持し、出力スケールが自動調整されます。</p>
       </section>
 
       <section class="panel">
@@ -131,12 +137,12 @@
       <section class="panel">
         <h2>グリッド（可変）</h2>
         <div class="grid-inputs">
-          <label>X<input type="number" id="grid-x" value="16" min="1" max="64" /></label>
-          <label>Y<input type="number" id="grid-y" value="16" min="1" max="64" /></label>
-          <label>Z<input type="number" id="grid-z" value="16" min="1" max="64" /></label>
+          <label>X<input type="number" id="grid-x" value="16" min="1" max="128" /></label>
+          <label>Y<input type="number" id="grid-y" value="16" min="1" max="128" /></label>
+          <label>Z<input type="number" id="grid-z" value="16" min="1" max="128" /></label>
         </div>
         <button id="btn-resize" class="wide">サイズ適用</button>
-        <p class="hint">アイテムは16推奨。モブ等は大きめに。</p>
+        <p class="hint">アイテムは16推奨。モブ等は大きめに（最大128）。細かい造形は出力スケールと併用。</p>
       </section>
 
       <section class="panel">
@@ -157,19 +163,23 @@
         <label class="field"><span>用途・想定挙動メモ（Mod制作用）</span>
           <textarea id="meta-intent" rows="2" placeholder="例: 右クリックで火球を発射する魔法の杖"></textarea></label>
 
-        <details class="sub">
-          <summary>戦闘ステータス</summary>
+        <details class="sub" id="combat-stats">
+          <summary>ステータス</summary>
           <div class="grid-inputs2">
-            <label>攻撃力<input type="number" id="st-attack" value="0" step="0.5" /></label>
-            <label>攻撃速度<input type="number" id="st-attackspeed" value="0" step="0.1" /></label>
-            <label>耐久値<input type="number" id="st-durability" value="0" /></label>
-            <label>射程<input type="number" id="st-range" value="0" step="0.5" /></label>
-            <label>装弾数<input type="number" id="st-magazine" value="0" /></label>
-            <label>リロード<input type="number" id="st-reload" value="0" step="0.1" /></label>
+            <label data-stat="attack">攻撃力<input type="number" id="st-attack" value="0" step="0.5" /></label>
+            <label data-stat="attackSpeed">攻撃速度<input type="number" id="st-attackspeed" value="0" step="0.1" /></label>
+            <label data-stat="durability">耐久値<input type="number" id="st-durability" value="0" /></label>
+            <label data-stat="range">射程<input type="number" id="st-range" value="0" step="0.5" /></label>
+            <label data-stat="magazine">装弾数<input type="number" id="st-magazine" value="0" /></label>
+            <label data-stat="reloadTime">リロード<input type="number" id="st-reload" value="0" step="0.1" /></label>
+            <label data-stat="defense">防御力<input type="number" id="st-defense" value="0" step="0.5" /></label>
+            <label data-stat="toughness">防具強度<input type="number" id="st-toughness" value="0" step="0.5" /></label>
+            <label data-stat="health">体力<input type="number" id="st-health" value="0" /></label>
+            <label data-stat="moveSpeed">移動速度<input type="number" id="st-movespeed" value="0" step="0.05" /></label>
           </div>
         </details>
 
-        <details class="sub">
+        <details class="sub" id="abilities-sub">
           <summary>特殊能力</summary>
           <div id="ability-list" class="abilities"></div>
         </details>
@@ -212,7 +222,9 @@
           <input type="text" id="item-id" value="custom_item" /></label>
         <label class="field"><span>pack_format</span>
           <input type="number" id="pack-format" value="34" min="1" /></label>
-        <p class="hint">pack_format例: 1.21.4→46, 1.21→34, 1.20.1→15</p>
+        <label class="field"><span>出力スケール（1ボクセル=N model単位）</span>
+          <input type="number" id="output-scale" value="1" min="0.0625" max="4" step="0.0625" /></label>
+        <p class="hint">pack_format例: 1.21.4→46, 1.21→34, 1.20.1→15<br>出力スケール=0.5なら32ボクセルが16単位に収まり、より細かい造形に。アイテムは全体16単位が目安。</p>
       </section>
 
       <section class="panel">
@@ -265,6 +277,8 @@
         <p id="export-info" class="hint"></p>
       </section>
     </aside>
+
+    <div id="sidebar-resizer" title="ドラッグで幅を調整"></div>
 
     <main id="canvas-container"></main>
   </div>

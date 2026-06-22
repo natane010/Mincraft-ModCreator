@@ -18,6 +18,19 @@
 
 const SPEC_FORMAT = 'natane-forge-spec/1';
 
+const STAT_LABELS = {
+  attack: '攻撃力', attackSpeed: '攻撃速度', durability: '耐久値', range: '射程',
+  magazine: '装弾数', reloadTime: 'リロード時間', defense: '防御力',
+  toughness: '防具強度', health: '体力', moveSpeed: '移動速度',
+};
+
+/** 種別に応じた表示対象ステータスキー。statFields が配列なら（空でも）それを使う。
+ *  未指定（古い spec）のときだけ既定6種にフォールバックする。 */
+function _statFields(meta) {
+  if (Array.isArray(meta.statFields)) return meta.statFields;
+  return ['attack', 'attackSpeed', 'durability', 'range', 'magazine', 'reloadTime'];
+}
+
 function buildSpecObject(meta, ctx) {
   const craftGrid = (meta.acquisition.crafting.grid || []).map(s => (s || '').trim());
   const hasCraft = craftGrid.some(Boolean);
@@ -30,6 +43,7 @@ function buildSpecObject(meta, ctx) {
     type: meta.type,
     intent: meta.intent || '',
     stats: meta.stats,
+    statFields: _statFields(meta),
     abilities: meta.abilities,
     acquisition: {
       method: meta.acquisition.method,
@@ -43,6 +57,7 @@ function buildSpecObject(meta, ctx) {
       model: ctx.modelPath,
       texture: ctx.texturePath,
       textureSize: ctx.textureSize,
+      unitScale: ctx.scale != null ? ctx.scale : 1,
     },
     geometry: {
       grid: ctx.grid,
@@ -69,16 +84,14 @@ function buildSpecMarkdown(meta, ctx) {
   if (meta.intent) L.push(`- **用途・想定挙動**: ${meta.intent}`);
   L.push('');
 
-  L.push('## ステータス');
-  L.push('| 項目 | 値 |');
-  L.push('|---|---|');
-  L.push(`| 攻撃力 | ${s.attack} |`);
-  L.push(`| 攻撃速度 | ${s.attackSpeed} |`);
-  L.push(`| 耐久値 | ${s.durability} |`);
-  L.push(`| 射程 | ${s.range} |`);
-  L.push(`| 装弾数 | ${s.magazine} |`);
-  L.push(`| リロード時間 | ${s.reloadTime} |`);
-  L.push('');
+  const fields = _statFields(meta);
+  if (fields.length) {
+    L.push('## ステータス');
+    L.push('| 項目 | 値 |');
+    L.push('|---|---|');
+    fields.forEach((k) => L.push(`| ${STAT_LABELS[k] || k} | ${s[k] || 0} |`));
+    L.push('');
+  }
 
   if (meta.abilities.length) {
     L.push('## 特殊能力');
@@ -105,6 +118,9 @@ function buildSpecMarkdown(meta, ctx) {
   L.push(`- モデル: \`${ctx.modelPath}\``);
   L.push(`- テクスチャ: \`${ctx.texturePath}\` (${ctx.textureSize}×${ctx.textureSize}px)`);
   L.push(`- 形状: グリッド ${ctx.grid.sx}×${ctx.grid.sy}×${ctx.grid.sz} / ボクセル ${ctx.voxelCount} / モデル要素 ${ctx.boxCount}`);
+  if (ctx.scale && ctx.scale !== 1) {
+    L.push(`- 出力スケール: 1ボクセル=${ctx.scale} model単位（全体 ${(ctx.grid.sx * ctx.scale).toFixed(2)}×${(ctx.grid.sy * ctx.scale).toFixed(2)}×${(ctx.grid.sz * ctx.scale).toFixed(2)} 単位）`);
+  }
   if (ctx.muzzle) {
     L.push(`- 銃口/発射点ロケーター \`muzzle\`: [${ctx.muzzle.x}, ${ctx.muzzle.y}, ${ctx.muzzle.z}]（モデル座標。発射原点・マズルフラッシュ位置に利用）`);
   }

@@ -49,11 +49,52 @@
     bindBones();
     bindProjectIO();
     bindQueue();
+    bindSidebarResizer();
     $('voxel-count').textContent = '0';
   }
 
   /* ---- メタデータ＆メモ フォーム ---- */
   const ABILITIES = ['炎属性', '毒付与', 'ノックバック', '範囲爆発', '吸収', '加速', '透明化', '発光'];
+
+  // ステータス項目の定義（id と表示用ラベル）
+  const STAT_DEFS = [
+    { key: 'attack', id: 'st-attack', label: '攻撃力' },
+    { key: 'attackSpeed', id: 'st-attackspeed', label: '攻撃速度' },
+    { key: 'durability', id: 'st-durability', label: '耐久値' },
+    { key: 'range', id: 'st-range', label: '射程' },
+    { key: 'magazine', id: 'st-magazine', label: '装弾数' },
+    { key: 'reloadTime', id: 'st-reload', label: 'リロード時間' },
+    { key: 'defense', id: 'st-defense', label: '防御力' },
+    { key: 'toughness', id: 'st-toughness', label: '防具強度' },
+    { key: 'health', id: 'st-health', label: '体力' },
+    { key: 'moveSpeed', id: 'st-movespeed', label: '移動速度' },
+  ];
+
+  // 種別ごとに「入力可能なステータス項目」「特殊能力を出すか」を可変にする
+  const TYPE_CONFIG = {
+    item:     { stats: [], abilities: true },
+    weapon:   { stats: ['attack', 'attackSpeed', 'durability', 'range'], abilities: true },
+    tool:     { stats: ['attackSpeed', 'durability'], abilities: true },
+    armor:    { stats: ['durability', 'defense', 'toughness'], abilities: true },
+    gun:      { stats: ['attack', 'range', 'magazine', 'reloadTime', 'durability'], abilities: true },
+    block:    { stats: ['durability'], abilities: false },
+    mob:      { stats: ['attack', 'health', 'moveSpeed'], abilities: true },
+    material: { stats: [], abilities: false },
+  };
+
+  function typeConfig(type) { return TYPE_CONFIG[type] || TYPE_CONFIG.item; }
+
+  /** 種別に応じてステータス欄/特殊能力欄の表示を切り替える */
+  function applyTypeFields(type) {
+    const cfg = typeConfig(type);
+    const show = new Set(cfg.stats);
+    STAT_DEFS.forEach((s) => {
+      const lab = document.querySelector(`[data-stat="${s.key}"]`);
+      if (lab) lab.style.display = show.has(s.key) ? '' : 'none';
+    });
+    $('combat-stats').style.display = cfg.stats.length ? '' : 'none';
+    $('abilities-sub').style.display = cfg.abilities ? '' : 'none';
+  }
 
   function buildMetaForm() {
     // 特殊能力チェックボックス
@@ -75,22 +116,26 @@
       inp.title = 'アイテムID (例: minecraft:iron_ingot)';
       cg.appendChild(inp);
     }
+    // 種別変更でステータス/特殊能力欄を可変表示
+    $('meta-type').addEventListener('change', () => applyTypeFields($('meta-type').value));
+    applyTypeFields($('meta-type').value);
   }
 
   function collectMeta() {
     const num = (id) => parseFloat($(id).value) || 0;
     const grid = [];
     for (let i = 0; i < 9; i++) grid.push($('craft-' + i).value);
-    const abilities = ABILITIES.filter((_, i) => $('ab-' + i).checked);
+    const type = $('meta-type').value;
+    const cfg = typeConfig(type);
+    const abilities = cfg.abilities ? ABILITIES.filter((_, i) => $('ab-' + i).checked) : [];
+    const stats = {};
+    STAT_DEFS.forEach((s) => { stats[s.key] = num(s.id); });
     return {
-      type: $('meta-type').value,
+      type,
       displayName: $('meta-name').value.trim(),
       intent: $('meta-intent').value.trim(),
-      stats: {
-        attack: num('st-attack'), attackSpeed: num('st-attackspeed'),
-        durability: num('st-durability'), range: num('st-range'),
-        magazine: num('st-magazine'), reloadTime: num('st-reload'),
-      },
+      stats,
+      statFields: cfg.stats.slice(),
       abilities,
       acquisition: {
         method: $('acq-method').value,
@@ -109,11 +154,10 @@
     set('meta-name', meta.displayName);
     set('meta-intent', meta.intent);
     const s = meta.stats || {};
-    set('st-attack', s.attack); set('st-attackspeed', s.attackSpeed);
-    set('st-durability', s.durability); set('st-range', s.range);
-    set('st-magazine', s.magazine); set('st-reload', s.reloadTime);
+    STAT_DEFS.forEach((d) => set(d.id, s[d.key]));
     const abs = meta.abilities || [];
     ABILITIES.forEach((a, i) => { const el = $('ab-' + i); if (el) el.checked = abs.indexOf(a) !== -1; });
+    applyTypeFields(meta.type || 'item');
     const acq = meta.acquisition || {};
     set('acq-method', acq.method);
     const grid = (acq.crafting && acq.crafting.grid) || [];
@@ -130,6 +174,7 @@
       itemId: $('item-id').value,
       packFormat: $('pack-format').value,
       target: $('export-target').value,
+      scale: parseFloat($('output-scale').value) || 1,
     };
   }
 
@@ -139,6 +184,7 @@
     if (ids.itemId) $('item-id').value = ids.itemId;
     if (ids.packFormat) $('pack-format').value = ids.packFormat;
     if (ids.target) $('export-target').value = ids.target;
+    if (ids.scale) $('output-scale').value = ids.scale;
   }
 
   /* ---- テンプレート ---- */
@@ -205,6 +251,42 @@
         editor.setMode(btn.dataset.mode);
       });
     });
+  }
+
+  /* ---- サイドバー幅のドラッグ調整 ---- */
+  function bindSidebarResizer() {
+    const sidebar = $('sidebar');
+    const handle = $('sidebar-resizer');
+    const MIN = 200, MAX = 620;
+    // 保存済み幅を復元
+    const saved = parseInt(localStorage.getItem('vf-sidebar-w'), 10);
+    if (saved && saved >= MIN && saved <= MAX) {
+      sidebar.style.flexBasis = saved + 'px';
+      sidebar.style.width = saved + 'px';
+    }
+    let dragging = false;
+    const onMove = (e) => {
+      if (!dragging) return;
+      const w = Math.max(MIN, Math.min(MAX, e.clientX - sidebar.getBoundingClientRect().left));
+      sidebar.style.flexBasis = w + 'px';
+      sidebar.style.width = w + 'px';
+    };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('dragging');
+      document.body.classList.remove('resizing-sidebar');
+      localStorage.setItem('vf-sidebar-w', parseInt(sidebar.style.width, 10) || 270);
+      window.dispatchEvent(new Event('resize')); // 3Dキャンバスを追従させる
+    };
+    handle.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      handle.classList.add('dragging');
+      document.body.classList.add('resizing-sidebar');
+      e.preventDefault();
+    });
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   }
 
   /* ---- その他コントロール ---- */
@@ -544,13 +626,19 @@
             try { sampler = await loadImageSampler(await fileToDataUrl(imgFile)); }
             catch (err) { sampler = null; texNote = ' ※テクスチャ読込失敗: ' + err.message; }
           }
-          const r = fmt === 'java-model' ? voxelizeJavaModel(obj, { sampler }) : voxelizeBedrockGeo(obj, { sampler });
+          const subdiv = parseInt($('import-subdiv').value, 10) || 1;
+          const r = fmt === 'java-model'
+            ? voxelizeJavaModel(obj, { sampler, subdiv })
+            : voxelizeBedrockGeo(obj, { sampler, subdiv });
           editor.loadData(r.data);
           editor.resetBones();
           refreshBoneUI();
           syncGridInputs(r.grid);
+          // 細分化した分、出力スケールを 1/subdiv にして実寸を保つ
+          if (subdiv > 1) $('output-scale').value = +(1 / subdiv).toFixed(4);
           $('export-info').textContent = r.info +
             (r.dropped ? `（範囲外の ${r.dropped} 件を除外）` : '') +
+            (subdiv > 1 ? ` / 細分化×${subdiv}（出力スケール=${+(1 / subdiv).toFixed(4)}）` : '') +
             (r.colored ? '' : ' ※色は仮(要塗り直し／テクスチャPNGを一緒に選ぶと色を復元)') + texNote;
         } else {
           alert('対応していないファイルです。\n.vdf.json / Java model.json(elements) / Bedrock .geo.json に対応しています。');
@@ -696,7 +784,7 @@
   function clampSize(v) {
     let n = parseInt(v, 10);
     if (isNaN(n)) n = 16;
-    return Math.max(1, Math.min(64, n));
+    return Math.max(1, Math.min(128, n));
   }
 
   /* ---- 出力 ---- */
@@ -706,6 +794,7 @@
     const namespace = sanitizeId(proj.ids.namespace) || 'natane_forge';
     const itemId = sanitizeId(proj.ids.itemId) || 'custom_item';
     const packFormat = parseInt(proj.ids.packFormat, 10) || 34;
+    const scale = parseFloat(proj.ids.scale) || 1;
     const ns = { namespace, itemId };
     const muzzle = proj.muzzle || null;
 
@@ -715,7 +804,7 @@
     const animNames = animSel.map((s) => s.key).concat(
       customAnims.filter((a) => a && a.keyframes && a.keyframes.length).map((a) => a.name || 'custom'));
 
-    const { model, canvas, boxCount } = buildItemModel(data, { namespace, itemId });
+    const { model, canvas, boxCount } = buildItemModel(data, { namespace, itemId, scale });
     const ctx = {
       namespace, itemId,
       modelPath: `assets/${namespace}/models/item/${itemId}.json`,
@@ -723,6 +812,7 @@
       textureSize: canvas.width,
       boxCount, voxelCount: data.count(),
       grid: { sx: data.sx, sy: data.sy, sz: data.sz },
+      scale,
       muzzle,
       bones: (proj.bones && proj.bones.length > 1) ? proj.bones : null,
       animations: animNames,
@@ -743,14 +833,14 @@
       files = r.files; pngEntries = [{ path: r.texturePath, canvas }]; readme = r.readme;
       label = 'CustomModelData / Mod不要';
     } else if (target === 'tacz') {
-      const geo = buildBedrockGeo(data, { identifier: 'geometry.' + itemId, muzzle, bones: proj.bones, boneOf: proj.boneOf });
+      const geo = buildBedrockGeo(data, { identifier: 'geometry.' + itemId, muzzle, bones: proj.bones, boneOf: proj.boneOf, unitScale: scale });
       const r = buildTaczPack(meta, ns, geo.geo);
       files = r.files;
       pngEntries = [{ path: r.uvPath, canvas: geo.canvas }, { path: r.slotPath, canvas: geo.canvas }];
       readme = r.readme;
       label = `TaCZガンパック（cube ${geo.boxCount}）`;
     } else if (target === 'geckolib') {
-      const geo = buildBedrockGeo(data, { identifier: 'geometry.' + itemId, muzzle, bones: proj.bones, boneOf: proj.boneOf });
+      const geo = buildBedrockGeo(data, { identifier: 'geometry.' + itemId, muzzle, bones: proj.bones, boneOf: proj.boneOf, unitScale: scale });
       const r = buildGeckolibPack(meta, ns, geo.geo);
       files = r.files; pngEntries = [{ path: r.texturePath, canvas: geo.canvas }]; readme = r.readme;
       label = 'GeckoLibアセット＋Java雛形';

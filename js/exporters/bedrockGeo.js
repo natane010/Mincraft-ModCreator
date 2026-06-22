@@ -34,6 +34,7 @@ function _geoBoneGroups(data, opts) {
 
 function buildBedrockGeo(data, opts) {
   opts = opts || {};
+  const s = opts.unitScale || 1; // 1ボクセルあたりの model 単位（細かい造形用）
   const groups = _geoBoneGroups(data, opts);
 
   // 全ボーンの色を集めて共有パレットを作る
@@ -46,10 +47,10 @@ function buildBedrockGeo(data, opts) {
       const { px, py } = palette.index.get(b.color);
       const uv = {};
       for (const f of _GEO_FACES) uv[f] = { uv: [px, py], uv_size: [1, 1] };
-      return { origin: [b.x, b.y, b.z], size: [b.w, b.h, b.d], uv };
+      return { origin: [b.x * s, b.y * s, b.z * s], size: [b.w * s, b.h * s, b.d * s], uv };
     });
     boxCount += cubes.length;
-    const bone = { name: g.name, pivot: g.pivot, cubes };
+    const bone = { name: g.name, pivot: [g.pivot[0] * s, g.pivot[1] * s, g.pivot[2] * s], cubes };
     if (g.parent) bone.parent = g.parent;
     return bone;
   });
@@ -73,7 +74,7 @@ function buildBedrockGeo(data, opts) {
   // 銃口/発射点ロケーター（root骨に付与。TaCZ/GeckoLib のアニメ・発射原点に利用）
   if (opts.muzzle) {
     const m = opts.muzzle;
-    bones[0].locators = { muzzle: [m.x, m.y, m.z] };
+    bones[0].locators = { muzzle: [m.x * s, m.y * s, m.z * s] };
   }
 
   return { geo, canvas: renderPaletteCanvas(palette), boxCount };

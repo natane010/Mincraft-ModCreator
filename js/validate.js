@@ -47,6 +47,16 @@ function validateExport(opts) {
     warnings.push(`使用色が ${colorCount} 色あります。パレットテクスチャが大きくなります。`);
   }
 
+  // --- 出力スケール（Javaモデルは座標 -16..32 推奨。アイテムは全体16目安） ---
+  const scale = parseFloat(ids.scale) || 1;
+  const maxDim = Math.max(data.sx, data.sy, data.sz) * scale;
+  if (['resourcepack', 'cmd', 'kubejs'].includes(target) && maxDim > 48) {
+    warnings.push(`出力サイズが ${maxDim.toFixed(1)} 単位とJavaモデルの推奨範囲(おおむね48単位)を超えます。出力スケールを下げるかグリッドを縮小してください。`);
+  }
+  if (scale <= 0) {
+    errors.push('出力スケールは正の数にしてください。');
+  }
+
   // --- pack_format ---
   if (target === 'resourcepack' || target === 'cmd') {
     const pf = parseInt(ids.packFormat, 10);

@@ -34,7 +34,7 @@ function detectImportFormat(obj) {
   return 'unknown';
 }
 
-function _clamp64(n) { n = Math.max(1, Math.round(n)); return Math.min(64, n); }
+function _clampDim(n) { n = Math.max(1, Math.round(n)); return Math.min(128, n); }
 
 /** 直方体 [min,max)（セル単位）を単色で塗る。範囲外はスキップしdropを数える */
 function _fillBox(data, x0, y0, z0, x1, y1, z1, color, drop) {
@@ -131,34 +131,35 @@ function voxelizeJavaModel(obj, opts) {
   opts = opts || {};
   const sampler = opts.sampler || null;
   const palette = opts.palette || IMPORT_PALETTE;
+  const s = Math.max(1, opts.subdiv || 1); // 細分化（小数座標の細部を保持）
   const els = obj.elements || [];
   if (!els.length) throw new Error('elements が見つかりません（Java item/block モデルではない可能性）。');
 
-  // 全要素のバウンディングボックス（floor/ceil でセルに丸め）
+  // 全要素のバウンディングボックス（細分化後に floor/ceil でセルに丸め）
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   let rotated = 0;
   for (const el of els) {
     if (!el.from || !el.to) continue;
     if (el.rotation) rotated++;
-    minX = Math.min(minX, Math.floor(el.from[0]));
-    minY = Math.min(minY, Math.floor(el.from[1]));
-    minZ = Math.min(minZ, Math.floor(el.from[2]));
-    maxX = Math.max(maxX, Math.ceil(el.to[0]));
-    maxY = Math.max(maxY, Math.ceil(el.to[1]));
-    maxZ = Math.max(maxZ, Math.ceil(el.to[2]));
+    minX = Math.min(minX, Math.floor(el.from[0] * s));
+    minY = Math.min(minY, Math.floor(el.from[1] * s));
+    minZ = Math.min(minZ, Math.floor(el.from[2] * s));
+    maxX = Math.max(maxX, Math.ceil(el.to[0] * s));
+    maxY = Math.max(maxY, Math.ceil(el.to[1] * s));
+    maxZ = Math.max(maxZ, Math.ceil(el.to[2] * s));
   }
   if (!isFinite(minX)) throw new Error('有効な from/to を持つ要素がありません。');
 
-  const sx = _clamp64(maxX - minX), sy = _clamp64(maxY - minY), sz = _clamp64(maxZ - minZ);
+  const sx = _clampDim(maxX - minX), sy = _clampDim(maxY - minY), sz = _clampDim(maxZ - minZ);
   const data = new VoxelData(sx, sy, sz);
   const drop = { n: 0 };
   let coloredN = 0;
 
   els.forEach((el, i) => {
     if (!el.from || !el.to) return;
-    const x0 = Math.floor(el.from[0]) - minX, y0 = Math.floor(el.from[1]) - minY, z0 = Math.floor(el.from[2]) - minZ;
-    let x1 = Math.ceil(el.to[0]) - minX, y1 = Math.ceil(el.to[1]) - minY, z1 = Math.ceil(el.to[2]) - minZ;
+    const x0 = Math.floor(el.from[0] * s) - minX, y0 = Math.floor(el.from[1] * s) - minY, z0 = Math.floor(el.from[2] * s) - minZ;
+    let x1 = Math.ceil(el.to[0] * s) - minX, y1 = Math.ceil(el.to[1] * s) - minY, z1 = Math.ceil(el.to[2] * s) - minZ;
     // 平面要素(厚み0)は1セルとして取り込む
     if (x1 <= x0) x1 = x0 + 1;
     if (y1 <= y0) y1 = y0 + 1;
@@ -184,6 +185,7 @@ function voxelizeBedrockGeo(obj, opts) {
   opts = opts || {};
   const sampler = opts.sampler || null;
   const palette = opts.palette || IMPORT_PALETTE;
+  const s = Math.max(1, opts.subdiv || 1); // 細分化（小数座標の細部を保持）
   const geos = obj['minecraft:geometry'];
   if (!Array.isArray(geos) || !geos.length) throw new Error('minecraft:geometry が見つかりません。');
   const desc = geos[0].description || {};
@@ -203,24 +205,24 @@ function voxelizeBedrockGeo(obj, opts) {
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   for (const c of cubes) {
-    minX = Math.min(minX, Math.floor(c.origin[0]));
-    minY = Math.min(minY, Math.floor(c.origin[1]));
-    minZ = Math.min(minZ, Math.floor(c.origin[2]));
-    maxX = Math.max(maxX, Math.ceil(c.origin[0] + c.size[0]));
-    maxY = Math.max(maxY, Math.ceil(c.origin[1] + c.size[1]));
-    maxZ = Math.max(maxZ, Math.ceil(c.origin[2] + c.size[2]));
+    minX = Math.min(minX, Math.floor(c.origin[0] * s));
+    minY = Math.min(minY, Math.floor(c.origin[1] * s));
+    minZ = Math.min(minZ, Math.floor(c.origin[2] * s));
+    maxX = Math.max(maxX, Math.ceil((c.origin[0] + c.size[0]) * s));
+    maxY = Math.max(maxY, Math.ceil((c.origin[1] + c.size[1]) * s));
+    maxZ = Math.max(maxZ, Math.ceil((c.origin[2] + c.size[2]) * s));
   }
 
-  const sx = _clamp64(maxX - minX), sy = _clamp64(maxY - minY), sz = _clamp64(maxZ - minZ);
+  const sx = _clampDim(maxX - minX), sy = _clampDim(maxY - minY), sz = _clampDim(maxZ - minZ);
   const data = new VoxelData(sx, sy, sz);
   const drop = { n: 0 };
   let coloredN = 0;
 
   cubes.forEach((c, i) => {
-    const x0 = Math.floor(c.origin[0]) - minX, y0 = Math.floor(c.origin[1]) - minY, z0 = Math.floor(c.origin[2]) - minZ;
-    let x1 = Math.ceil(c.origin[0] + c.size[0]) - minX;
-    let y1 = Math.ceil(c.origin[1] + c.size[1]) - minY;
-    let z1 = Math.ceil(c.origin[2] + c.size[2]) - minZ;
+    const x0 = Math.floor(c.origin[0] * s) - minX, y0 = Math.floor(c.origin[1] * s) - minY, z0 = Math.floor(c.origin[2] * s) - minZ;
+    let x1 = Math.ceil((c.origin[0] + c.size[0]) * s) - minX;
+    let y1 = Math.ceil((c.origin[1] + c.size[1]) * s) - minY;
+    let z1 = Math.ceil((c.origin[2] + c.size[2]) * s) - minZ;
     if (x1 <= x0) x1 = x0 + 1;
     if (y1 <= y0) y1 = y0 + 1;
     if (z1 <= z0) z1 = z0 + 1;

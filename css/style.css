@@ -42,11 +42,24 @@ html, body {
 #sidebar {
   width: 270px;
   flex: 0 0 270px;
+  min-width: 200px;
+  max-width: 620px;
   background: var(--panel);
-  border-right: 1px solid var(--line);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 14px;
 }
+
+/* サイドバー幅のドラッグ調整ハンドル */
+#sidebar-resizer {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--line);
+  position: relative;
+}
+#sidebar-resizer:hover, #sidebar-resizer.dragging { background: var(--accent); }
+body.resizing-sidebar { cursor: col-resize; user-select: none; }
+body.resizing-sidebar #canvas-container canvas { pointer-events: none; }
 
 .panel { margin-bottom: 18px; }
 .panel h2 {
@@ -107,6 +120,8 @@ textarea {
 select {
   background: var(--panel2); color: var(--text);
   border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; font-size: 13px;
+  width: 100%; max-width: 100%; min-width: 0;
+  text-overflow: ellipsis;
 }
 
 details.sub { margin: 8px 0; border: 1px solid var(--line); border-radius: 6px; }
