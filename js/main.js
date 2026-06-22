@@ -337,6 +337,7 @@
     });
 
     $('drag-draw').addEventListener('change', (e) => editor.setDragDraw(e.target.checked));
+    $('face-pixel').addEventListener('change', (e) => editor.setFacePixelMode(e.target.checked));
 
     // キーボードショートカット（テキスト入力中は無効）
     document.addEventListener('keydown', (e) => {
@@ -465,10 +466,19 @@
   }
 
   /* ---- カスタムアニメ（手動キーフレーム） ---- */
+  let _editingIndex = null; // 編集中の committed カスタムアニメ index（新規は null）
+  let _draftTime = 0;       // 下書きプレビューの現在時刻
+
   function bindCustomAnims() {
     addKfRow();
-    $('btn-canim-addkf').addEventListener('click', () => addKfRow());
+    $('btn-canim-addkf').addEventListener('click', () => { addKfRow(); onTableChanged(); });
     $('btn-canim-commit').addEventListener('click', commitCustomAnim);
+    // 表/メタの編集を下書きプレビューへ即時反映（双方向同期）
+    $('canim-kf-body').addEventListener('input', onTableChanged);
+    ['canim-name', 'canim-length', 'canim-loop', 'canim-bone'].forEach((id) => {
+      const el = $(id);
+      if (el) el.addEventListener('change', onTableChanged);
+    });
     renderCustomAnimList();
   }
 
@@ -486,8 +496,11 @@
         `<input type="number" class="kf-rx" step="5" value="${rot[0]}">` +
         `<input type="number" class="kf-ry" step="5" value="${rot[1]}">` +
         `<input type="number" class="kf-rz" step="5" value="${rot[2]}"></td>` +
-      `<td><button class="tiny kf-del" title="この行を削除">✕</button></td>`;
-    tr.querySelector('.kf-del').addEventListener('click', () => tr.remove());
+      `<td class="kf-ctl">` +
+        `<button class="tiny kf-jump" title="この時刻を3Dプレビュー">▶</button>` +
+        `<button class="tiny kf-del" title="この行を削除">✕</button></td>`;
+    tr.querySelector('.kf-del').addEventListener('click', () => { tr.remove(); onTableChanged(); });
+    tr.querySelector('.kf-jump').addEventListener('click', () => jumpToKf(tr));
     $('canim-kf-body').appendChild(tr);
   }
 
@@ -505,17 +518,38 @@
     const kfs = readKfRows();
     if (!name) { alert('アニメ名を入力してください'); return; }
     if (!kfs.length) { alert('キーフレームを1つ以上追加してください'); return; }
-    customAnims.push({
+    const entry = {
       name,
       length: parseFloat($('canim-length').value) || 0,
       loop: $('canim-loop').checked,
       bone: $('canim-bone').value || 'root',
       keyframes: kfs,
-    });
+    };
+    if (_editingIndex != null && customAnims[_editingIndex]) customAnims[_editingIndex] = entry;
+    else customAnims.push(entry);
+    _editingIndex = null;
+    $('btn-canim-commit').textContent = 'このアニメを追加';
     renderCustomAnimList();
     $('canim-name').value = '';
     $('canim-kf-body').innerHTML = '';
     addKfRow();
+    onTableChanged();
+  }
+
+  /** committed カスタムアニメを表へ読み戻して再編集（プレビュー→表 / 往復編集） */
+  function editCustomAnim(i) {
+    const a = customAnims[i];
+    if (!a) return;
+    $('canim-name').value = a.name || '';
+    $('canim-length').value = a.length || 0;
+    $('canim-loop').checked = !!a.loop;
+    if ([...$('canim-bone').options].some((o) => o.value === a.bone)) $('canim-bone').value = a.bone;
+    $('canim-kf-body').innerHTML = '';
+    (a.keyframes || []).forEach((kf) => addKfRow(kf));
+    if (!a.keyframes || !a.keyframes.length) addKfRow();
+    _editingIndex = i;
+    $('btn-canim-commit').textContent = '更新';
+    onTableChanged();
   }
 
   function renderCustomAnimList() {
@@ -525,10 +559,17 @@
       const li = document.createElement('li');
       const span = document.createElement('span');
       span.textContent = `${i + 1}. ${a.name}（${a.keyframes.length}kf / ${a.bone}${a.loop ? ' / loop' : ''}）`;
+      const ed = document.createElement('button');
+      ed.className = 'tiny'; ed.textContent = '編集'; ed.title = '表に読み戻して再編集';
+      ed.addEventListener('click', () => editCustomAnim(i));
       const del = document.createElement('button');
       del.className = 'tiny'; del.textContent = '✕'; del.title = '削除';
-      del.addEventListener('click', () => { customAnims.splice(i, 1); renderCustomAnimList(); });
-      li.appendChild(span); li.appendChild(del);
+      del.addEventListener('click', () => {
+        customAnims.splice(i, 1);
+        if (_editingIndex === i) { _editingIndex = null; $('btn-canim-commit').textContent = 'このアニメを追加'; }
+        renderCustomAnimList();
+      });
+      li.appendChild(span); li.appendChild(ed); li.appendChild(del);
       ul.appendChild(li);
     });
     buildPreviewAnimList();
@@ -537,8 +578,85 @@
   function applyCustomAnims(list) {
     customAnims.length = 0;
     (list || []).forEach((a) => customAnims.push(a));
+    _editingIndex = null;
+    $('btn-canim-commit').textContent = 'このアニメを追加';
     renderCustomAnimList();
     buildPreviewAnimList();
+  }
+
+  /* ---- 下書き(編集中の表)を3Dプレビューへ橋渡し（双方向同期） ---- */
+  /** 表の現在内容を1つのカスタムアニメ entry に。空(全0)なら null */
+  function draftEntry() {
+    const kfs = readKfRows();
+    if (!kfs.length) return null;
+    return {
+      name: '__draft',
+      length: parseFloat($('canim-length').value) || 0,
+      loop: $('canim-loop').checked,
+      bone: $('canim-bone').value || 'root',
+      keyframes: kfs,
+    };
+  }
+
+  /** プレビュー用 animation JSON（プリセット＋committed＋編集中の下書き） */
+  function previewAnimJson() {
+    const d = draftEntry();
+    const list = d ? customAnims.concat([d]) : customAnims;
+    return buildAnimationJson(getIds().itemId, collectAnimSelections(), list);
+  }
+
+  function isDraftSelected() {
+    const v = $('anim-preview-select') ? $('anim-preview-select').value : '';
+    return v.slice(-8) === '.__draft';
+  }
+
+  /** 表が変わったら選択肢を更新。下書きを表示中なら現在時刻で再ポーズ */
+  function onTableChanged() {
+    buildPreviewAnimList();
+    if (isDraftSelected()) applyDraftScrub(_draftTime);
+  }
+
+  function applyDraftScrub(t) {
+    const sel = $('anim-preview-select');
+    const key = sel ? sel.value : '';
+    if (!key) return;
+    _draftTime = t;
+    editor.stopAnimation();
+    editor.scrubAnimation(t, previewAnimJson(), key, $('anim-preview-loop').checked);
+    updatePlayButtons(false);
+  }
+
+  /** プレビュー selに下書きオプションを確実に選択させる */
+  function selectDraftInPreview() {
+    buildPreviewAnimList();
+    const sel = $('anim-preview-select');
+    const opt = [...sel.options].find((o) => o.value.slice(-8) === '.__draft');
+    if (opt) sel.value = opt.value;
+    return !!opt;
+  }
+
+  /** キーフレーム行の▶: その時刻を下書きプレビュー */
+  function jumpToKf(tr) {
+    const t = parseFloat(tr.querySelector('.kf-t').value) || 0;
+    if (!selectDraftInPreview()) return; // 全0など下書きが空なら何もしない
+    applyDraftScrub(t);
+    highlightKfRow(tr);
+  }
+
+  function highlightKfRow(tr) {
+    [...$('canim-kf-body').querySelectorAll('tr')].forEach((r) => r.classList.toggle('kf-active', r === tr));
+  }
+
+  /** 再生/スクラブ時刻に最も近いキーフレーム行をハイライト（プレビュー→表） */
+  function highlightNearestKf(time) {
+    const rows = [...$('canim-kf-body').querySelectorAll('tr')];
+    let best = null, bestD = Infinity;
+    rows.forEach((r) => {
+      const t = parseFloat(r.querySelector('.kf-t').value) || 0;
+      const d = Math.abs(t - time);
+      if (d < bestD) { bestD = d; best = r; }
+    });
+    rows.forEach((r) => r.classList.toggle('kf-active', r === best));
   }
 
   /* ---- アニメ3Dプレビュー ---- */
@@ -560,15 +678,14 @@
       editor.stopAnimation();
       const key = $('anim-preview-select').value;
       if (!key) return;
-      const json = buildAnimationJson(getIds().itemId, collectAnimSelections(), customAnims);
-      editor.scrubAnimation(0, json, key, $('anim-preview-loop').checked);
+      _draftTime = 0;
+      editor.scrubAnimation(0, previewAnimJson(), key, $('anim-preview-loop').checked);
     });
 
     $('btn-anim-play').addEventListener('click', () => {
       const key = $('anim-preview-select').value;
       if (!key) return;
-      const json = buildAnimationJson(getIds().itemId, collectAnimSelections(), customAnims);
-      editor.playAnimation(json, key, $('anim-preview-loop').checked);
+      editor.playAnimation(previewAnimJson(), key, $('anim-preview-loop').checked);
       updatePlayButtons(true);
     });
 
@@ -587,10 +704,11 @@
       _scrubDragging = true;
       const key = $('anim-preview-select').value;
       if (!key) return;
-      const json = buildAnimationJson(getIds().itemId, collectAnimSelections(), customAnims);
+      const json = previewAnimJson();
       const entry = json && json.animations && json.animations[key];
       const len = entry ? (Number(entry.animation_length) || 0) : 0;
       const t = len * (parseFloat(scrub.value) / 1000);
+      if (isDraftSelected()) _draftTime = t;
       editor.scrubAnimation(t, json, key, $('anim-preview-loop').checked);
       updatePlayButtons(false);
     });
@@ -605,6 +723,8 @@
         const v = (length > 0) ? Math.round((time / length) * 1000) : 0;
         $('anim-scrub').value = v;
       }
+      // 下書きプレビュー中は、現在時刻に最も近いキーフレーム行をハイライト（プレビュー→表）
+      if (isDraftSelected()) { _draftTime = time; highlightNearestKf(time); }
       // 非ループで終端に達したら（playing=falseに落ちる）停止ボタン表示へ
       if (!editor.anim.playing) updatePlayButtons(false);
     };
@@ -621,7 +741,7 @@
     if (!sel) return;
     const prev = sel.value;
     sel.innerHTML = '';
-    const json = buildAnimationJson(getIds().itemId, collectAnimSelections(), customAnims);
+    const json = previewAnimJson();
     const keys = json && json.animations ? Object.keys(json.animations) : [];
     if (!keys.length) {
       const o = document.createElement('option');
@@ -635,7 +755,8 @@
     keys.forEach((k) => {
       const o = document.createElement('option');
       o.value = k;
-      o.textContent = k.split('.').slice(2).join('.'); // 末尾名（animation.<id>.<name> の <name>）
+      const name = k.split('.').slice(2).join('.'); // 末尾名（animation.<id>.<name> の <name>）
+      o.textContent = (name === '__draft') ? '▼ 編集中の下書き' : name;
       sel.appendChild(o);
     });
     // 以前の選択を維持できれば維持
@@ -811,6 +932,7 @@
           const p = deserializeProject(obj);
           editor.loadData(p.data);
           editor.setFaceColors(p.faceColors); // 面色復元（loadData 後）
+          editor.setFacePixels(p.facePixels); // 面ピクセル復元（loadData 後）
           editor.setMuzzle(p.muzzle, true);
           editor.setBones(p.bones, p.boneMap);
           applyMeta(p.meta);
@@ -955,6 +1077,10 @@
     for (const [x, y, z, color] of s.voxels) d.set(x, y, z, color);
     // 面色を反映（各エクスポータが面別UVを出せるよう一括出力でも必須）
     (s.faceColors || []).forEach(([x, y, z, face, color]) => d.setFace(x, y, z, face, color));
+    // 面ピクセルを反映（一括出力でもアトラスへ伝わる）
+    (s.facePixels || []).forEach(([x, y, z, face, arr]) => {
+      if (Array.isArray(arr)) for (let i = 0; i < arr.length; i++) if (arr[i]) d.setFacePixel(x, y, z, face, i, arr[i]);
+    });
     return d;
   }
 

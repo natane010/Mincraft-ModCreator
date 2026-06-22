@@ -7,7 +7,8 @@ class VoxelEditor {
   constructor(container, data) {
     this.container = container;
     this.data = data;
-    this.mode = 'add';            // 'add' | 'remove' | 'paint' | 'face' | 'locator'
+    this.mode = 'add';            // 'add' | 'remove' | 'paint' | 'face' | 'fill' | 'locator' | 'select'
+    this.facePixelMode = false;   // 面塗りモード内: true=ピクセル単位 / false=面全体
     this.color = '#3a8ee6';
     this.meshes = new Map();      // "x,y,z" -> THREE.Mesh
     this.onChange = null;         // ボクセル数変更時のコールバック
@@ -153,8 +154,8 @@ class VoxelEditor {
 
     el.addEventListener('pointerdown', (e) => {
       down = { x: e.clientX, y: e.clientY, button: e.button };
-      // 連続描画: 左ボタン＋編集モードでストローク開始
-      if (this.dragDraw && e.button === 0 && this._isEditMode()) {
+      // 連続描画: 左ボタン＋編集/面塗りモードでストローク開始
+      if (this.dragDraw && e.button === 0 && (this._isEditMode() || this.mode === 'face')) {
         const hit = this._pick(e);
         if (hit) {
           this._drawing = true;
@@ -228,6 +229,23 @@ class VoxelEditor {
       if (key === this._lastDrawKey) return;
       this._lastDrawKey = key;
       if (this.mode === 'remove') this._erase(u.x, u.y, u.z); else this._paint(u.x, u.y, u.z);
+    } else if (this.mode === 'face') {
+      if (hit.object === this.basePlane || !hit.face) return;
+      const u = hit.object.userData;
+      const face = this._faceNameFromNormal(hit.face.normal);
+      if (!face) return;
+      if (this.facePixelMode) {
+        const idx = this._pixelIndexFromHit(hit);
+        const key = u.x + ',' + u.y + ',' + u.z + ',' + face + '#' + idx;
+        if (key === this._lastDrawKey) return;
+        this._lastDrawKey = key;
+        this._paintFacePixelAt(u.x, u.y, u.z, face, idx);
+      } else {
+        const key = u.x + ',' + u.y + ',' + u.z + ',' + face;
+        if (key === this._lastDrawKey) return;
+        this._lastDrawKey = key;
+        this._paintFaceAt(u.x, u.y, u.z, face);
+      }
     }
   }
 
@@ -248,7 +266,7 @@ class VoxelEditor {
 
     if (this.mode === 'select') { this._handleSelectClick(hit); return; }
 
-    if (this.mode === 'face') { this._paintFace(hit); return; }
+    if (this.mode === 'face') { this._lastDrawKey = null; this._drawAtHit(hit); return; }
 
     if (this.mode === 'fill') {
       if (hit.object === this.basePlane) return;
@@ -325,31 +343,72 @@ class VoxelEditor {
     return null;
   }
 
-  /** クリックした面に現在色を塗る（単発クリックのみ・ミラー非対応） */
-  _paintFace(hit) {
-    if (!hit || hit.object === this.basePlane || !hit.face) return;
-    const u = hit.object.userData;
-    const face = this._faceNameFromNormal(hit.face.normal);
-    if (!face) return;
-    if (this.data.getFace(u.x, u.y, u.z, face) === this.color) return; // 同色なら無視
-    this._pushHistory();
-    this.data.setFace(u.x, u.y, u.z, face, this.color);
-    const mesh = this.meshes.get(this.data.key(u.x, u.y, u.z));
+  /** 面全体に現在色を塗る（ストローク共用・_maybePush で履歴1回） */
+  _paintFaceAt(x, y, z, face) {
+    if (this.data.getFace(x, y, z, face) === this.color) return; // 同色なら無視
+    this._maybePush();
+    this.data.setFace(x, y, z, face, this.color);
+    const mesh = this.meshes.get(this.data.key(x, y, z));
     if (mesh) this._applyFaceColorsToMesh(mesh);
     this._changed();
+  }
+
+  /** 面の1ピクセルに現在色を塗る（res×res 細分。ストローク共用） */
+  _paintFacePixelAt(x, y, z, face, idx) {
+    const arr = this.data.getFacePixelArray(x, y, z, face);
+    if (arr && arr[idx] === this.color) return;
+    this._maybePush();
+    this.data.setFacePixel(x, y, z, face, idx, this.color);
+    const mesh = this.meshes.get(this.data.key(x, y, z));
+    if (mesh) this._applyFaceColorsToMesh(mesh);
+    this._changed();
+  }
+
+  /** raycast の uv から、その面の res×res 格子のピクセル index を返す */
+  _pixelIndexFromHit(hit) {
+    const res = this.data.faceRes || 8;
+    const u = hit.uv ? hit.uv.x : 0;
+    const v = hit.uv ? hit.uv.y : 0;
+    let col = Math.floor(u * res), row = Math.floor((1 - v) * res);
+    col = Math.max(0, Math.min(res - 1, col));
+    row = Math.max(0, Math.min(res - 1, row));
+    return row * res + col;
+  }
+
+  /** ピクセル配列 arr(res*res) から CanvasTexture を作る（null は fallback 色） */
+  _faceTexture(arr, fallback) {
+    const res = this.data.faceRes || 8;
+    const canvas = document.createElement('canvas');
+    canvas.width = res; canvas.height = res;
+    const ctx = canvas.getContext('2d');
+    for (let r = 0; r < res; r++) {
+      for (let c = 0; c < res; c++) {
+        ctx.fillStyle = arr[r * res + c] || fallback || '#000000';
+        ctx.fillRect(c, r, 1, 1);
+      }
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.needsUpdate = true;
+    return tex;
   }
 
   /** BoxGeometry の group(6面)順 [+X,-X,+Y,-Y,+Z,-Z] に対応する面名 */
   _materialFor(x, y, z, color) {
     const faces = this.data.facesOf(x, y, z);
-    if (!Object.keys(faces).length) {
-      // 面色なし＝従来どおり単一マテリアル（後方互換・GPU負荷も従来同等）
+    const hasPix = this.data.hasFacePixels(x, y, z);
+    if (!Object.keys(faces).length && !hasPix) {
+      // 面色/面ピクセルなし＝従来どおり単一マテリアル（後方互換・GPU負荷も従来同等）
       return new THREE.MeshLambertMaterial({ color });
     }
     // group 順: +X(east), -X(west), +Y(up), -Y(down), +Z(south), -Z(north)
     const order = ['east', 'west', 'up', 'down', 'south', 'north'];
-    return order.map((f) =>
-      new THREE.MeshLambertMaterial({ color: faces[f] !== undefined ? faces[f] : color }));
+    return order.map((f) => {
+      const arr = this.data.getFacePixelArray(x, y, z, f);
+      if (arr) return new THREE.MeshLambertMaterial({ map: this._faceTexture(arr, color) });
+      return new THREE.MeshLambertMaterial({ color: faces[f] !== undefined ? faces[f] : color });
+    });
   }
 
   /** 既存マテリアルを破棄して面色対応マテリアルへ差し替え（geometryは共有のまま） */
@@ -370,10 +429,11 @@ class VoxelEditor {
     }
   }
 
-  /** マテリアルのみ破棄（配列対応）。edges 等の子は残す */
+  /** マテリアルのみ破棄（配列対応・面ピクセルの texture も破棄）。edges 等の子は残す */
   _disposeMeshMaterial(mesh) {
-    if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
-    else mesh.material.dispose();
+    const d = (m) => { if (m.map) m.map.dispose(); m.dispose(); };
+    if (Array.isArray(mesh.material)) mesh.material.forEach(d);
+    else d(mesh.material);
   }
 
   /* ---------- 塗りつぶし（バケツ / 範囲） ---------- */
@@ -569,6 +629,26 @@ class VoxelEditor {
     }
   }
 
+  /** 面ピクセルのON/OFF（面塗りモード内のサブ切替） */
+  setFacePixelMode(on) { this.facePixelMode = !!on; }
+
+  /** 保存データから面ピクセルを復元（loadData 後に呼ぶ） */
+  setFacePixels(entries) {
+    this.data.facePixels.clear();
+    if (entries && entries.length) {
+      for (const [x, y, z, face, arr] of entries) {
+        if (!Array.isArray(arr)) continue;
+        for (let i = 0; i < arr.length; i++) if (arr[i]) this.data.setFacePixel(x, y, z, face, i, arr[i]);
+      }
+    }
+    const touched = new Set();
+    for (const [x, y, z] of this.data.facePixelEntries()) touched.add(this.data.key(x, y, z));
+    for (const k of touched) {
+      const mesh = this.meshes.get(k);
+      if (mesh) this._applyFaceColorsToMesh(mesh);
+    }
+  }
+
   /** 保存データからボーン構成を復元 */
   setBones(bones, boneMapEntries) {
     if (this._bonePreviewActive) this.clearBonePreview();
@@ -678,6 +758,7 @@ class VoxelEditor {
       bones: this.bones.map((b) => ({ name: b.name, pivot: b.pivot.slice(), parent: b.parent })),
       boneMap: [...this.boneMap.entries()],
       faceColors: this.data.faceEntries(), // [[x,y,z,face,color], ...]（空配列なら従来と差分なし）
+      facePixels: this.data.facePixelEntries(), // [[x,y,z,face,arr], ...]（空なら差分なし）
     };
   }
 
@@ -694,6 +775,9 @@ class VoxelEditor {
     for (const [x, y, z, color] of s.voxels) d.set(x, y, z, color);
     // 面色を復元（voxel存在チェックは setFace 内で実施）。_loadDataRaw が面別マテリアルで描画
     if (s.faceColors) for (const [x, y, z, face, color] of s.faceColors) d.setFace(x, y, z, face, color);
+    if (s.facePixels) for (const [x, y, z, face, arr] of s.facePixels) {
+      if (Array.isArray(arr)) for (let i = 0; i < arr.length; i++) if (arr[i]) d.setFacePixel(x, y, z, face, i, arr[i]);
+    }
     this._loadDataRaw(d, frame);
     this.setMuzzle(s.muzzle || null, true);
     if (s.bones) this.setBones(s.bones, s.boneMap);

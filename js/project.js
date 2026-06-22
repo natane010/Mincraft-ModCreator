@@ -31,6 +31,7 @@ function serializeProject(state) {
     boneMap: (s.boneMap && s.boneMap.length) ? s.boneMap : null, // [["x,y,z","name"], ...]
     // 面色レイヤ。未使用時は null 化＝従来JSONと差分なし（後方互換）
     faceColors: (s.faceColors && s.faceColors.length) ? s.faceColors : null, // [[x,y,z,face,color], ...]
+    facePixels: (s.facePixels && s.facePixels.length) ? s.facePixels : null, // [[x,y,z,face,[colors...]], ...]
     customAnims: state.customAnims || null,                   // [{name,length,loop,bone,keyframes}]
   };
 }
@@ -63,6 +64,9 @@ function deserializeProject(obj) {
     // 面色レイヤ。[x,y,z,face,color] の長さ5要素のみ採用（中身検証は editor.setFace 側に委譲）
     faceColors: Array.isArray(obj.faceColors)
       ? obj.faceColors.filter((e) => Array.isArray(e) && e.length === 5) : null,
+    // 面ピクセル。[x,y,z,face,[colors...]] の形のみ採用
+    facePixels: Array.isArray(obj.facePixels)
+      ? obj.facePixels.filter((e) => Array.isArray(e) && e.length === 5 && Array.isArray(e[4])) : null,
     customAnims: Array.isArray(obj.customAnims) ? obj.customAnims : [],
     dropped,
   };

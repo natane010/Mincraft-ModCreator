@@ -15,6 +15,10 @@ function buildItemModel(data, opts) {
   const itemId = opts.itemId;
   const s = opts.scale || 1; // 1ボクセルあたりの model 単位（細かい造形用）
 
+  // 面ピクセル（ピクセルアート）があればアトラス方式へ分岐（無ければ従来パレット＝後方互換）
+  const atlas = (typeof buildFaceAtlas === 'function') ? buildFaceAtlas(data) : { used: false };
+  if (atlas.used) return _buildItemModelAtlas(data, opts, atlas, s);
+
   // 面色を持つ voxel は greedyBoxes から分離し、1 voxel=1 element で個別に面別UV出力する。
   // 面色なし voxel だけを greedyBoxes でまとめる（面色未使用時は元 data と完全一致＝後方互換）。
   const facedVoxels = data.entries().filter(([x, y, z]) => data.hasFace(x, y, z));
@@ -84,4 +88,60 @@ function buildItemModel(data, opts) {
 
   const canvas = renderPaletteCanvas(palette);
   return { model, canvas, boxCount: boxes.length + facedVoxels.length };
+}
+
+/** 面ピクセル対応版（アトラス使用）。面色/面ピクセルのある voxel は 1 element で面別UV */
+function _buildItemModelAtlas(data, opts, atlas, s) {
+  const namespace = opts.namespace;
+  const itemId = opts.itemId;
+  const res = atlas.res, dim = atlas.dim;
+
+  const facedVoxels = data.entries().filter(([x, y, z]) => data.hasFace(x, y, z) || data.hasFacePixels(x, y, z));
+  const plainData = new VoxelData(data.sx, data.sy, data.sz);
+  for (const [x, y, z, c] of data.entries()) {
+    if (!data.hasFace(x, y, z) && !data.hasFacePixels(x, y, z)) plainData.set(x, y, z, c);
+  }
+  const boxes = greedyBoxes(plainData);
+
+  const elements = boxes.map((b) => {
+    const uv = atlasUv(atlas.colorTexel(b.color), res, dim);
+    const faces = {};
+    for (const f of FACES) faces[f] = { uv: uv.slice(), texture: '#0' };
+    return {
+      from: [b.x * s, b.y * s, b.z * s],
+      to: [(b.x + b.w) * s, (b.y + b.h) * s, (b.z + b.d) * s],
+      faces,
+    };
+  });
+
+  for (const [x, y, z, body] of facedVoxels) {
+    const fc = data.facesOf(x, y, z);
+    const faces = {};
+    for (const f of FACES) {
+      let texel;
+      if (atlas.hasPix(x, y, z, f)) texel = atlas.faceTexel(x, y, z, f);
+      else texel = atlas.colorTexel(fc[f] !== undefined ? fc[f] : body);
+      faces[f] = { uv: atlasUv(texel, res, dim), texture: '#0' };
+    }
+    elements.push({
+      from: [x * s, y * s, z * s],
+      to: [(x + 1) * s, (y + 1) * s, (z + 1) * s],
+      faces,
+    });
+  }
+
+  const texRef = namespace + ':item/' + itemId;
+  const model = {
+    credit: 'Made with Natane Voxel & Data Forge',
+    textures: { 0: texRef, particle: texRef },
+    elements,
+    display: {
+      gui: { rotation: [30, 225, 0], translation: [0, 0, 0], scale: [0.625, 0.625, 0.625] },
+      ground: { rotation: [0, 0, 0], translation: [0, 3, 0], scale: [0.25, 0.25, 0.25] },
+      fixed: { rotation: [0, 0, 0], translation: [0, 0, 0], scale: [0.5, 0.5, 0.5] },
+      thirdperson_righthand: { rotation: [75, 45, 0], translation: [0, 2.5, 0], scale: [0.375, 0.375, 0.375] },
+      firstperson_righthand: { rotation: [0, 45, 0], translation: [0, 0, 0], scale: [0.4, 0.4, 0.4] },
+    },
+  };
+  return { model, canvas: atlas.canvas, boxCount: boxes.length + facedVoxels.length };
 }

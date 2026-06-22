@@ -222,7 +222,10 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .kf-table input[type="number"] { width: 40px; text-align: center; padding: 3px 2px; font-size: 10px; }
 .kf-table .kf-t input { width: 44px; }
 .kf-vec { display: flex; gap: 2px; }
-.kf-table .kf-del { padding: 2px 4px; }
+.kf-table .kf-del, .kf-table .kf-jump { padding: 2px 4px; }
+.kf-ctl { white-space: nowrap; display: flex; gap: 2px; }
+.kf-table tr.kf-active td { background: rgba(58, 142, 230, .18); }
+.kf-table tr.kf-active { outline: 1px solid var(--accent); }
 
 /* バリデーション結果 */
 .validation { margin: 8px 0 0; display: flex; flex-direction: column; gap: 5px; }

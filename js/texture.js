@@ -38,3 +38,68 @@ function uvFor(color, palette) {
   const s = 16 / dim;
   return [px * s, py * s, (px + 1) * s, (py + 1) * s];
 }
+
+/**
+ * 面ピクセル（ピクセルアート）対応アトラス。
+ * data に1つでも面ピクセルがあれば used:true を返し、本体色/面色は res×res の単色タイル、
+ * 面ピクセルは res×res の絵タイルとして並べる。面ピクセル未使用時は used:false（既存パレット維持）。
+ *
+ * 返り値（used 時）:
+ *   { used:true, res, dim, canvas,
+ *     colorTexel(color)        -> [px,py]（タイル左上のアトラス画素座標）
+ *     faceTexel(x,y,z,face)    -> [px,py]
+ *     hasPix(x,y,z,face)       -> bool }
+ */
+function buildFaceAtlas(data) {
+  const res = data.faceRes || 8;
+  const pixelEntries = (typeof data.facePixelEntries === 'function') ? data.facePixelEntries() : [];
+  if (!pixelEntries.length) return { used: false };
+
+  const colorSlot = new Map();
+  const pixSlot = new Map();
+  const tiles = []; // {type:'color', color} | {type:'pix', arr, body}
+  for (const c of data.allColors()) { colorSlot.set(c, tiles.length); tiles.push({ type: 'color', color: c }); }
+  for (const [x, y, z, face, arr] of pixelEntries) {
+    pixSlot.set(x + ',' + y + ',' + z + ',' + face, tiles.length);
+    tiles.push({ type: 'pix', arr, body: data.get(x, y, z) });
+  }
+
+  let perRow = 1; const need = Math.ceil(Math.sqrt(tiles.length));
+  while (perRow < need) perRow *= 2;            // 1行のタイル数（2の冪）
+  const dim = perRow * res;                     // res が2の冪なら dim も2の冪
+  const slot = (i) => [(i % perRow) * res, Math.floor(i / perRow) * res];
+
+  function render() {
+    const canvas = document.createElement('canvas');
+    canvas.width = dim; canvas.height = dim;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, dim, dim);
+    tiles.forEach((t, i) => {
+      const [ox, oy] = slot(i);
+      if (t.type === 'color') {
+        ctx.fillStyle = t.color; ctx.fillRect(ox, oy, res, res);
+      } else {
+        for (let r = 0; r < res; r++) {
+          for (let c = 0; c < res; c++) {
+            ctx.fillStyle = t.arr[r * res + c] || t.body || '#000000';
+            ctx.fillRect(ox + c, oy + r, 1, 1);
+          }
+        }
+      }
+    });
+    return canvas;
+  }
+
+  return {
+    used: true, res, dim, canvas: render(),
+    colorTexel: (c) => slot(colorSlot.has(c) ? colorSlot.get(c) : 0),
+    faceTexel: (x, y, z, face) => slot(pixSlot.get(x + ',' + y + ',' + z + ',' + face)),
+    hasPix: (x, y, z, face) => pixSlot.has(x + ',' + y + ',' + z + ',' + face),
+  };
+}
+
+/** アトラスのタイル(px,py,res) を Java モデル UV [u0,v0,u1,v1]（0〜16基準）へ */
+function atlasUv(texel, res, dim) {
+  const k = 16 / dim;
+  return [texel[0] * k, texel[1] * k, (texel[0] + res) * k, (texel[1] + res) * k];
+}

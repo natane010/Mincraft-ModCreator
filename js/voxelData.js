@@ -12,6 +12,10 @@ class VoxelData {
     // 面色レイヤ（オーバーレイ）。key "x,y,z,face" -> color。
     // デフォルト空＝面色なし＝本体色を使用。空のときは既存挙動・既存出力に一切影響しない。
     this.faceColors = new Map();
+    // 面ピクセルレイヤ。key "x,y,z,face" -> Array(faceRes*faceRes) of color|null。
+    // 面を res×res に分割して個別色を塗る（ピクセルアート）。空なら既存挙動に影響なし。
+    this.facePixels = new Map();
+    this.faceRes = 8; // 面ピクセルの解像度（1辺）
   }
 
   key(x, y, z) { return x + ',' + y + ',' + z; }
@@ -29,8 +33,11 @@ class VoxelData {
   }
 
   remove(x, y, z) {
-    // 本体色削除に連動してその voxel の全面色も削除
-    for (const f of VoxelData.FACES) this.faceColors.delete(this.faceKey(x, y, z, f));
+    // 本体色削除に連動してその voxel の全面色・面ピクセルも削除
+    for (const f of VoxelData.FACES) {
+      this.faceColors.delete(this.faceKey(x, y, z, f));
+      this.facePixels.delete(this.faceKey(x, y, z, f));
+    }
     return this.map.delete(this.key(x, y, z));
   }
 
@@ -38,7 +45,7 @@ class VoxelData {
 
   has(x, y, z) { return this.map.has(this.key(x, y, z)); }
 
-  clear() { this.map.clear(); this.faceColors.clear(); }
+  clear() { this.map.clear(); this.faceColors.clear(); this.facePixels.clear(); }
 
   /* ---------- 面色レイヤ ---------- */
   /** 面色を設定（voxel が存在するときのみ）。成功で true */
@@ -86,6 +93,47 @@ class VoxelData {
     return out;
   }
 
+  /* ---------- 面ピクセルレイヤ（面を res×res に分割して塗る） ---------- */
+  /** 面ピクセル配列を取得（無ければ作る）。voxel が無ければ null */
+  _ensureFacePixels(x, y, z, face) {
+    if (!this.has(x, y, z) || VoxelData.FACES.indexOf(face) < 0) return null;
+    const k = this.faceKey(x, y, z, face);
+    let arr = this.facePixels.get(k);
+    if (!arr) { arr = new Array(this.faceRes * this.faceRes).fill(null); this.facePixels.set(k, arr); }
+    return arr;
+  }
+
+  /** 面の idx 番ピクセルに色を設定。成功で true */
+  setFacePixel(x, y, z, face, idx, color) {
+    const arr = this._ensureFacePixels(x, y, z, face);
+    if (!arr || idx < 0 || idx >= arr.length) return false;
+    arr[idx] = color;
+    return true;
+  }
+
+  /** 面ピクセル配列を取得（無ければ undefined） */
+  getFacePixelArray(x, y, z, face) { return this.facePixels.get(this.faceKey(x, y, z, face)); }
+
+  /** その voxel に1面でも面ピクセルがあるか */
+  hasFacePixels(x, y, z) {
+    for (const f of VoxelData.FACES) {
+      if (this.facePixels.has(this.faceKey(x, y, z, f))) return true;
+    }
+    return false;
+  }
+
+  /** [[x,y,z,face,arr], ...] を返す（arr はコピー） */
+  facePixelEntries() {
+    const out = [];
+    for (const [k, arr] of this.facePixels) {
+      const i = k.lastIndexOf(',');
+      const face = k.slice(i + 1);
+      const [x, y, z] = k.slice(0, i).split(',').map(Number);
+      out.push([x, y, z, face, arr.slice()]);
+    }
+    return out;
+  }
+
   count() { return this.map.size; }
 
   /** グリッドサイズ変更。範囲外に出たボクセルは破棄。 */
@@ -95,11 +143,13 @@ class VoxelData {
       const [x, y, z] = k.split(',').map(Number);
       if (!this.inBounds(x, y, z)) this.map.delete(k);
     }
-    // 範囲外に出た面色も破棄（key は "x,y,z,face"）
-    for (const k of [...this.faceColors.keys()]) {
-      const p = k.split(',');
-      const x = Number(p[0]), y = Number(p[1]), z = Number(p[2]);
-      if (!this.inBounds(x, y, z)) this.faceColors.delete(k);
+    // 範囲外に出た面色・面ピクセルも破棄（key は "x,y,z,face"）
+    for (const map of [this.faceColors, this.facePixels]) {
+      for (const k of [...map.keys()]) {
+        const p = k.split(',');
+        const x = Number(p[0]), y = Number(p[1]), z = Number(p[2]);
+        if (!this.inBounds(x, y, z)) map.delete(k);
+      }
     }
   }
 

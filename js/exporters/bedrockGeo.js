@@ -28,7 +28,7 @@ function _geoBoneGroups(data, opts) {
   for (const [x, y, z, c] of data.entries()) {
     let n = boneOf(x, y, z);
     if (!buckets[n]) n = names[0];
-    if (data.hasFace(x, y, z)) faced[n].push([x, y, z, c]);
+    if (data.hasFace(x, y, z) || data.hasFacePixels(x, y, z)) faced[n].push([x, y, z, c]);
     else buckets[n].set(x, y, z, c);
   }
   return def.map((b) => ({
@@ -43,34 +43,52 @@ function buildBedrockGeo(data, opts) {
   const s = opts.unitScale || 1; // 1ボクセルあたりの model 単位（細かい造形用）
   const groups = _geoBoneGroups(data, opts);
 
-  // 全ボーンの色を集めて共有パレットを作る（既存色＝boxes本体色を先に並べ、面色を後ろに追加）
-  const colorSet = [];
-  const seen = new Set();
-  const addColor = (c) => { if (c != null && !seen.has(c)) { seen.add(c); colorSet.push(c); } };
-  groups.forEach((g) => g.boxes.forEach((b) => addColor(b.color)));
-  groups.forEach((g) => g.faced.forEach(([x, y, z, c]) => {
-    addColor(c);
-    const fc = data.facesOf(x, y, z);
-    for (const f of _GEO_FACES) if (fc[f] !== undefined) addColor(fc[f]);
-  }));
-  const palette = buildPalette(colorSet);
+  // 面ピクセルがあればアトラス方式、無ければ従来パレット（色1=1テクセル＝後方互換）
+  const atlas = (typeof buildFaceAtlas === 'function') ? buildFaceAtlas(data) : { used: false };
+
+  let texDim, canvas, colorUv, facedUv;
+  if (atlas.used) {
+    const r = atlas.res;
+    texDim = atlas.dim;
+    canvas = atlas.canvas;
+    colorUv = (color) => ({ uv: atlas.colorTexel(color), uv_size: [r, r] });
+    facedUv = (x, y, z, face, body) => {
+      const t = atlas.hasPix(x, y, z, face) ? atlas.faceTexel(x, y, z, face)
+        : atlas.colorTexel(_facedColor(data, x, y, z, face, body));
+      return { uv: t, uv_size: [r, r] };
+    };
+  } else {
+    // 全ボーンの色を集めて共有パレットを作る（既存色＝boxes本体色を先に並べ、面色を後ろに追加）
+    const colorSet = [];
+    const seen = new Set();
+    const addColor = (c) => { if (c != null && !seen.has(c)) { seen.add(c); colorSet.push(c); } };
+    groups.forEach((g) => g.boxes.forEach((b) => addColor(b.color)));
+    groups.forEach((g) => g.faced.forEach(([x, y, z, c]) => {
+      addColor(c);
+      const fc = data.facesOf(x, y, z);
+      for (const f of _GEO_FACES) if (fc[f] !== undefined) addColor(fc[f]);
+    }));
+    const palette = buildPalette(colorSet);
+    texDim = palette.dim;
+    canvas = renderPaletteCanvas(palette);
+    colorUv = (color) => { const { px, py } = palette.index.get(color); return { uv: [px, py], uv_size: [1, 1] }; };
+    facedUv = (x, y, z, face, body) => {
+      const { px, py } = palette.index.get(_facedColor(data, x, y, z, face, body));
+      return { uv: [px, py], uv_size: [1, 1] };
+    };
+  }
 
   let boxCount = 0;
   const bones = groups.map((g) => {
     const cubes = g.boxes.map((b) => {
-      const { px, py } = palette.index.get(b.color);
       const uv = {};
-      for (const f of _GEO_FACES) uv[f] = { uv: [px, py], uv_size: [1, 1] };
+      for (const f of _GEO_FACES) uv[f] = colorUv(b.color);
       return { origin: [b.x * s, b.y * s, b.z * s], size: [b.w * s, b.h * s, b.d * s], uv };
     });
-    // 面色 voxel を 1 cube として追加（各面ごとに面色 or 本体色のテクセルへ）
+    // 面色/面ピクセル voxel を 1 cube として追加（各面ごとに面別UVへ）
     for (const [x, y, z, body] of g.faced) {
-      const fc = data.facesOf(x, y, z);
       const uv = {};
-      for (const f of _GEO_FACES) {
-        const { px, py } = palette.index.get(fc[f] !== undefined ? fc[f] : body);
-        uv[f] = { uv: [px, py], uv_size: [1, 1] };
-      }
+      for (const f of _GEO_FACES) uv[f] = facedUv(x, y, z, f, body);
       cubes.push({ origin: [x * s, y * s, z * s], size: [s, s, s], uv });
     }
     boxCount += cubes.length;
@@ -85,8 +103,8 @@ function buildBedrockGeo(data, opts) {
     'minecraft:geometry': [{
       description: {
         identifier: opts.identifier || 'geometry.model',
-        texture_width: palette.dim,
-        texture_height: palette.dim,
+        texture_width: texDim,
+        texture_height: texDim,
         visible_bounds_width: Math.ceil(w / 16) + 2,
         visible_bounds_height: Math.ceil(h / 16) + 2,
         visible_bounds_offset: [0, (h / 16) / 2, 0],
@@ -101,5 +119,11 @@ function buildBedrockGeo(data, opts) {
     bones[0].locators = { muzzle: [m.x * s, m.y * s, m.z * s] };
   }
 
-  return { geo, canvas: renderPaletteCanvas(palette), boxCount };
+  return { geo, canvas, boxCount };
+}
+
+/** faced voxel の指定面に使う色（面色があればそれ、無ければ本体色） */
+function _facedColor(data, x, y, z, face, body) {
+  const c = data.getFace(x, y, z, face);
+  return c !== undefined ? c : body;
 }

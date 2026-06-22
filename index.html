@@ -43,8 +43,9 @@
           <label><input type="checkbox" id="mirror-z"> Z</label>
           <button id="btn-clear-muzzle" class="tiny" title="銃口点を消去">銃口点クリア</button>
         </div>
-        <label class="toggle"><input type="checkbox" id="drag-draw"> 連続描画（左ドラッグで描く／右ドラッグで回転）</label>
-        <p class="hint">「塗潰」はクリックした連結同色領域を現在色に一括変更。「面塗」=クリックした面だけを現在色に（第1版は面単位の単色、ミラー非対応）。「銃口点」で発射原点(muzzle)を設置。「選択」で2点クリックして範囲を囲みます。</p>
+        <label class="toggle"><input type="checkbox" id="drag-draw"> 連続描画（左ドラッグで描く／右ドラッグで回転。面塗にも有効）</label>
+        <label class="toggle"><input type="checkbox" id="face-pixel"> 面塗をピクセル単位にする（8×8・ドット絵）</label>
+        <p class="hint">「塗潰」はクリックした連結同色領域を現在色に一括変更。「面塗」=面を現在色に（ピクセル単位ONで面を8×8に分割して塗れる）。連続描画ONで面/ピクセルをドラッグ塗り可。「銃口点」で発射原点(muzzle)、「選択」で2点クリックして範囲指定。</p>
       </section>
 
       <section class="panel">
@@ -279,7 +280,7 @@
           <button id="btn-canim-commit" class="tiny">このアニメを追加</button>
         </div>
         <ul id="canim-list" class="queue-list"></ul>
-        <p class="hint">複数キーフレームで自由な動きを定義（移動=モデル単位 / 回転=度）。TaCZ/GeckoLib出力にプリセットと共に同梱されます。</p>
+        <p class="hint">複数キーフレームで自由な動きを定義（移動=モデル単位 / 回転=度）。各行の▶で3Dプレビューに反映、下のプレビューで「▼編集中の下書き」を選ぶと表の編集が即時反映されます。一覧の「編集」で再編集可。TaCZ/GeckoLib出力にプリセットと共に同梱。</p>
       </section>
 
       <section class="panel">
